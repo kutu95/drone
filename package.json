@@ -1,0 +1,35 @@
+{
+  "name": "dji-air3-mission-planner",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test:parser": "tsx scripts/test-log-parser.ts",
+    "update:photo-filenames": "tsx scripts/update-photo-filenames.ts",
+    "update:photo-filenames:dry-run": "tsx scripts/update-photo-filenames.ts --dry-run"
+  },
+  "dependencies": {
+    "@react-google-maps/api": "^2.19.3",
+    "@supabase/supabase-js": "^2.39.0",
+    "exifr": "^7.1.3",
+    "jszip": "^3.10.1",
+    "next": "^14.2.33",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/google.maps": "^3.55.0",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,38 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Notify deployment started
+      run: |
+        echo "🚀 Deployment started for commit ${{ github.sha }}"
+        echo "Triggered by: ${{ github.actor }}"
+        
+    # Note: You'll need to configure SSH access to your server
+    # See DEPLOYMENT_GUIDE.md for manual deployment steps
+    # GitHub Actions deployment requires:
+    # 1. SSH key setup in GitHub Secrets
+    # 2. Server IP and credentials
+    # 3. Or use a webhook-based approach instead
+    
+    - name: Deployment instructions
+      run: |
+        echo "📋 For automatic deployment, you can:"
+        echo "1. Use GitHub webhook to trigger server-side script"
+        echo "2. Use SSH action with secrets configured"
+        echo "3. Manual: SSH to server and run ~/apps/drone/server-deploy.sh"
+        echo ""
+        echo "See DEPLOYMENT_GUIDE.md for details"
+
