@@ -424,7 +424,11 @@ export default function FlightLogsPage() {
                           onChange={(e) => {
                             if (e.target.checked) {
                               const groupIds = new Set(group.logs.map(log => log.id));
-                              setSelectedLogIds(prev => new Set([...prev, ...groupIds]));
+                              setSelectedLogIds(prev => {
+                                const newSet = new Set(prev);
+                                groupIds.forEach(id => newSet.add(id));
+                                return newSet;
+                              });
                             } else {
                               const groupIds = new Set(group.logs.map(log => log.id));
                               setSelectedLogIds(prev => {
