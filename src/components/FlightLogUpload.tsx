@@ -281,7 +281,7 @@ export default function FlightLogUpload({ onUploadComplete, onError }: FlightLog
     // Create a fake event to reuse the file select handler
     const fakeEvent = {
       target: { files },
-    } as React.ChangeEvent<HTMLInputElement>;
+    } as unknown as React.ChangeEvent<HTMLInputElement>;
 
     await handleFileSelect(fakeEvent);
   };
