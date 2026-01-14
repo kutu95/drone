@@ -152,12 +152,13 @@ export async function POST(request: NextRequest) {
           console.error('Error converting file to buffer:', bufferError);
           throw new Error(`Failed to read file: ${bufferError instanceof Error ? bufferError.message : 'Unknown error'}`);
         }
-      } else if (file instanceof Blob) {
-        // Handle Blob
-        filename = (file as any).name || 'flight-log.txt';
-        console.log('Blob received, size:', file.size);
+      } else if (typeof file === 'object' && file !== null && 'arrayBuffer' in file && 'size' in file) {
+        // Handle Blob-like object
+        const blobLike = file as { arrayBuffer: () => Promise<ArrayBuffer>; size: number; name?: string };
+        filename = blobLike.name || 'flight-log.txt';
+        console.log('Blob-like object received, size:', blobLike.size);
         
-        const arrayBuffer = await file.arrayBuffer();
+        const arrayBuffer = await blobLike.arrayBuffer();
         buffer = Buffer.from(arrayBuffer);
       } else {
         // Handle as FormDataEntryValue - convert to string and validate
