@@ -203,28 +203,30 @@ export default function TestParserPage() {
                     {results.cliParser.dataPointsCount || 0}
                   </div>
                 </div>
-                {results.cliParser.durationSeconds && (
+                {typeof results.cliParser.durationSeconds === 'number' && (
                   <div>
                     <span className="font-medium">Duration:</span>{' '}
                     {results.cliParser.durationSeconds.toFixed(1)}s
                   </div>
                 )}
-                {results.cliParser.maxAltitudeM && (
+                {typeof results.cliParser.maxAltitudeM === 'number' && (
                   <div>
                     <span className="font-medium">Max Altitude:</span>{' '}
                     {results.cliParser.maxAltitudeM.toFixed(1)}m
                   </div>
                 )}
-                {results.cliParser.maxSpeedMps && (
+                {typeof results.cliParser.maxSpeedMps === 'number' && (
                   <div>
                     <span className="font-medium">Max Speed:</span>{' '}
                     {results.cliParser.maxSpeedMps.toFixed(1)} m/s
                   </div>
                 )}
-                {results.cliParser.homeLocation && (
+                {results.cliParser.homeLocation && typeof results.cliParser.homeLocation === 'object' && results.cliParser.homeLocation !== null && (
                   <div>
                     <span className="font-medium">Home Location:</span>{' '}
-                    {results.cliParser.homeLocation.lat?.toFixed(6)}, {results.cliParser.homeLocation.lng?.toFixed(6)}
+                    {typeof (results.cliParser.homeLocation as any).lat === 'number' && typeof (results.cliParser.homeLocation as any).lng === 'number' && (
+                      <>{(results.cliParser.homeLocation as any).lat.toFixed(6)}, {(results.cliParser.homeLocation as any).lng.toFixed(6)}</>
+                    )}
                   </div>
                 )}
                 {results.cliParser.firstDataPoint && (
