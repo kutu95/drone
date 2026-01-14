@@ -221,14 +221,21 @@ export default function TestParserPage() {
                     {results.cliParser.maxSpeedMps.toFixed(1)} m/s
                   </div>
                 )}
-                {results.cliParser.homeLocation && typeof results.cliParser.homeLocation === 'object' && results.cliParser.homeLocation !== null && (
-                  <div>
-                    <span className="font-medium">Home Location:</span>{' '}
-                    {typeof (results.cliParser.homeLocation as any).lat === 'number' && typeof (results.cliParser.homeLocation as any).lng === 'number' && (
-                      <>{(results.cliParser.homeLocation as any).lat.toFixed(6)}, {(results.cliParser.homeLocation as any).lng.toFixed(6)}</>
-                    )}
-                  </div>
-                )}
+                {(() => {
+                  const homeLoc = results.cliParser.homeLocation;
+                  if (homeLoc && typeof homeLoc === 'object' && homeLoc !== null) {
+                    const loc = homeLoc as { lat?: number; lng?: number };
+                    if (typeof loc.lat === 'number' && typeof loc.lng === 'number') {
+                      return (
+                        <div>
+                          <span className="font-medium">Home Location:</span>{' '}
+                          {loc.lat.toFixed(6)}, {loc.lng.toFixed(6)}
+                        </div>
+                      );
+                    }
+                  }
+                  return null;
+                })()}
                 {results.cliParser.firstDataPoint && (
                   <details className="mt-4">
                     <summary className="cursor-pointer font-medium text-gray-900">First Data Point</summary>
