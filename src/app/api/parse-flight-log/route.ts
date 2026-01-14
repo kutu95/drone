@@ -259,6 +259,13 @@ export async function POST(request: NextRequest) {
     }
     
     // Save to database using authenticated client
+    if (!result.flightLog) {
+      return NextResponse.json(
+        { error: 'Parsed flight log data is missing' },
+        { status: 500 }
+      );
+    }
+
     console.log('Saving flight log to database...');
     try {
       const flightLogId = await saveFlightLogWithClient(authenticatedClient, user.id, result.flightLog);
