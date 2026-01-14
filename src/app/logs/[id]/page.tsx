@@ -688,7 +688,7 @@ export default function FlightLogDetailPage() {
 
         {/* Battery Health Information */}
         {flightLog.dataPoints && flightLog.dataPoints.length > 0 && (() => {
-          const batteryDataPoints = flightLog.dataPoints.filter(dp => 
+          const batteryDataPoints = flightLog.dataPoints?.filter(dp => 
             dp.batteryVoltage !== undefined || 
             dp.batteryTemperature !== undefined ||
             dp.batteryCurrent !== undefined ||
@@ -1189,7 +1189,7 @@ export default function FlightLogDetailPage() {
       {/* Photo Lightbox Modal */}
       {selectedPhotoIndex !== null && (() => {
         const photosWithGPS = flightLog.dataPoints
-          .filter(dp => dp.isPhoto === true && dp.lat !== undefined && dp.lng !== undefined);
+          ?.filter(dp => dp.isPhoto === true && dp.lat !== undefined && dp.lng !== undefined) || [];
         const selectedPhoto = photosWithGPS[selectedPhotoIndex];
         
         if (!selectedPhoto) return null;
