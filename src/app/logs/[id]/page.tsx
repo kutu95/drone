@@ -920,7 +920,7 @@ export default function FlightLogDetailPage() {
                               >
                                 <div className="flex items-center gap-2">
                                   <span className="font-semibold text-red-800 capitalize">{category}</span>
-                                  <span className="text-sm text-red-600">({errors.length})</span>
+                                  <span className="text-sm text-red-600">({errors?.length || 0})</span>
                                 </div>
                                 <svg
                                   className={`w-5 h-5 text-red-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
@@ -933,7 +933,7 @@ export default function FlightLogDetailPage() {
                               </button>
                               {isExpanded && (
                                 <div className="p-3 space-y-2 bg-white">
-                                  {errors.map((error, idx) => (
+                                  {errors?.map((error, idx) => (
                                     <div key={error.id || idx} className="bg-red-50 border border-red-200 rounded p-3">
                                       <div className="flex justify-between items-start mb-1">
                                         <span className="font-medium text-red-800">{error.message}</span>
