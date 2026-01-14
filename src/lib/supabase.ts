@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { Mission, Waypoint, MissionDB, WaypointDB, FlightLog, FlightLogDataPoint, FlightLogDB, FlightLogDataPointDB, BatteryStats, BatteryLabel, BatteryLabelDB, Drone, DroneDB, FlightLogWarningErrorDB, OrthomosaicProject, OrthomosaicProjectDB } from './types';
 
+// Re-export types for convenience
+export type { BatteryStats, BatteryLabel, Mission, Waypoint, FlightLog, FlightLogDataPoint, Drone, OrthomosaicProject };
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
