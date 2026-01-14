@@ -332,7 +332,7 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
     // Read all image files from the date folder
     const photoFiles: Array<{ file: File; filename: string }> = [];
     
-    for await (const entry of dateFolderHandle.values()) {
+    for await (const entry of dateFolderHandle.entries()) {
       if (entry.kind === 'file') {
         const file = await entry.getFile();
         const filename = file.name.toLowerCase();
