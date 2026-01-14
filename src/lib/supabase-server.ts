@@ -141,7 +141,7 @@ export async function checkFlightLogExistsWithClient(
  * Register or update a drone in the fleet from flight log metadata
  */
 export async function registerDroneFromLog(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   ownerId: string,
   metadata: Record<string, unknown>
 ): Promise<void> {
@@ -349,7 +349,7 @@ export async function saveFlightLogWithClient(
  * This performs the full calculation and updates the battery_stats table
  */
 export async function recalculateAllBatteryStats(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   ownerId: string
 ): Promise<void> {
   console.log(`Starting battery stats recalculation for user ${ownerId}...`);
