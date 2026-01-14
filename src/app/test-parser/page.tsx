@@ -276,31 +276,40 @@ export default function TestParserPage() {
                     {results.basicParser.dataPointsCount || 0}
                   </div>
                 </div>
-                {results.basicParser.durationSeconds && (
+                {typeof results.basicParser.durationSeconds === 'number' && (
                   <div>
                     <span className="font-medium">Duration:</span>{' '}
                     {results.basicParser.durationSeconds.toFixed(1)}s
                   </div>
                 )}
-                {results.basicParser.maxAltitudeM && (
+                {typeof results.basicParser.maxAltitudeM === 'number' && (
                   <div>
                     <span className="font-medium">Max Altitude:</span>{' '}
                     {results.basicParser.maxAltitudeM.toFixed(1)}m
                   </div>
                 )}
-                {results.basicParser.maxSpeedMps && (
+                {typeof results.basicParser.maxSpeedMps === 'number' && (
                   <div>
                     <span className="font-medium">Max Speed:</span>{' '}
                     {results.basicParser.maxSpeedMps.toFixed(1)} m/s
                   </div>
                 )}
-                {results.basicParser.homeLocation && (
-                  <div>
-                    <span className="font-medium">Home Location:</span>{' '}
-                    {results.basicParser.homeLocation.lat?.toFixed(6)}, {results.basicParser.homeLocation.lng?.toFixed(6)}
-                  </div>
-                )}
-                {results.basicParser.firstDataPoint && (
+                {(() => {
+                  const homeLoc = results.basicParser.homeLocation;
+                  if (homeLoc && typeof homeLoc === 'object' && homeLoc !== null) {
+                    const loc = homeLoc as { lat?: unknown; lng?: unknown };
+                    if (typeof loc.lat === 'number' && typeof loc.lng === 'number') {
+                      return (
+                        <div>
+                          <span className="font-medium">Home Location:</span>{' '}
+                          {loc.lat.toFixed(6)}, {loc.lng.toFixed(6)}
+                        </div>
+                      );
+                    }
+                  }
+                  return null;
+                })()}
+                {results.basicParser.firstDataPoint !== undefined && results.basicParser.firstDataPoint !== null && (
                   <details className="mt-4">
                     <summary className="cursor-pointer font-medium text-gray-900">First Data Point</summary>
                     <pre className="mt-2 bg-gray-50 p-3 rounded text-sm overflow-auto">
