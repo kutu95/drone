@@ -10,7 +10,8 @@
     "test:parser": "tsx scripts/test-log-parser.ts",
     "update:photo-filenames": "tsx scripts/update-photo-filenames.ts",
     "update:photo-filenames:dry-run": "tsx scripts/update-photo-filenames.ts --dry-run",
-    "migrate:data": "tsx scripts/migrate-data-via-api.ts"
+    "migrate:data": "tsx scripts/migrate-data-via-api.ts",
+    "fix:build": "tsx scripts/auto-fix-typescript.ts"
   },
   "dependencies": {
     "@react-google-maps/api": "^2.19.3",
