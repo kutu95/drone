@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Fleet drones table to track all drones in the system
 CREATE TABLE IF NOT EXISTS fleet_drones (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -33,5 +37,5 @@ CREATE POLICY "Users can delete own fleet drones" ON fleet_drones
 
 -- Trigger for updated_at
 CREATE TRIGGER update_fleet_drones_updated_at BEFORE UPDATE ON fleet_drones
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  FOR EACH ROW EXECUTE FUNCTION drone.update_updated_at_column();
 

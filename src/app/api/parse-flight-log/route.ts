@@ -109,11 +109,11 @@ export async function POST(request: NextRequest) {
         filename = file.name;
         console.log('File received:', filename, 'size:', file.size);
         
-        // Validate file type
-        if (!filename.match(/DJIFlightRecord_\d{4}-\d{2}-\d{2}_\[\d{2}-\d{2}-\d{2}\]\.txt$/)) {
+        // Validate file type - accept both DJIFlightRecord_ and FlightRecord_ formats
+        if (!filename.match(/(DJI)?FlightRecord_\d{4}-\d{2}-\d{2}_\[\d{2}-\d{2}-\d{2}\]\.txt$/)) {
           console.error('Invalid file name format:', filename);
           return NextResponse.json(
-            { error: 'Invalid file format. Expected DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt' },
+            { error: 'Invalid file format. Expected FlightRecord_YYYY-MM-DD_[HH-MM-SS].txt or DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt' },
             { status: 400 }
           );
         }

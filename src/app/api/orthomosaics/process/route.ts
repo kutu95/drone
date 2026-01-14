@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient, createAuthenticatedSupabaseClient } from '@/lib/supabase-server';
-import { fetchFlightLog } from '@/lib/supabase-server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 3600; // 60 minutes for ODM processing
@@ -57,32 +56,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch flight log to get photo data points
-    const flightLog = await fetchFlightLog(flightLogId, authenticatedClient);
+    // Fetch flight log to get photo data points using authenticated client
+    const { data: flightLogData, error: logError } = await authenticatedClient
+      .from('flight_logs')
+      .select('*')
+      .eq('id', flightLogId)
+      .eq('owner_id', user.id)
+      .single();
     
-    if (!flightLog) {
+    if (logError || !flightLogData) {
       return NextResponse.json(
         { error: 'Flight log not found' },
         { status: 404 }
       );
     }
 
-    // Verify ownership
-    const { data: logCheck } = await authenticatedClient
-      .from('flight_logs')
-      .select('owner_id')
-      .eq('id', flightLogId)
-      .single();
+    // Fetch data points for this flight log
+    const { data: dataPoints } = await authenticatedClient
+      .from('flight_log_data_points')
+      .select('*')
+      .eq('flight_log_id', flightLogId)
+      .eq('is_photo', true)
+      .order('timestamp_offset_ms', { ascending: true });
 
-    if (!logCheck || logCheck.owner_id !== user.id) {
+    if (!dataPoints || dataPoints.length === 0) {
       return NextResponse.json(
-        { error: 'Flight log not found or access denied' },
-        { status: 403 }
+        { error: 'No photos found in flight log. Please ensure photos are matched to the flight.' },
+        { status: 400 }
       );
     }
 
-    // Get photos from flight log
-    const photos = flightLog.dataPoints?.filter(dp => dp.isPhoto && dp.originalFileUrl) || [];
+    // Get photos from data points (filter for those with original file URLs)
+    const photos = dataPoints.filter((dp: any) => dp.is_photo && dp.original_file_url);
 
     if (photos.length === 0) {
       return NextResponse.json(
@@ -92,8 +97,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Calculate area bounds from photo locations
-    const photoLats = photos.map(p => p.lat).filter((lat): lat is number => lat !== undefined);
-    const photoLngs = photos.map(p => p.lng).filter((lng): lng is number => lng !== undefined);
+    const photoLats = photos.map((p: any) => p.lat).filter((lat: any): lat is number => lat !== undefined && lat !== null);
+    const photoLngs = photos.map((p: any) => p.lng).filter((lng: any): lng is number => lng !== undefined && lng !== null);
 
     if (photoLats.length === 0 || photoLngs.length === 0) {
       return NextResponse.json(
@@ -137,10 +142,10 @@ export async function POST(request: NextRequest) {
     // - Upload photos to Supabase Storage and trigger server-side processing
     // - Or use a local ODM installation
 
-    // Extract photo file paths from originalFileUrl
+    // Extract photo file paths from original_file_url
     const photoPaths = photos
-      .map(p => p.originalFileUrl)
-      .filter((path): path is string => !!path);
+      .map((p: any) => p.original_file_url)
+      .filter((path: any): path is string => !!path);
 
     return NextResponse.json({
       success: true,

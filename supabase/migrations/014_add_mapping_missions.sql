@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Migration: Add mapping missions and orthomosaic support
 
 -- Add mission_type to missions table
@@ -69,5 +73,5 @@ CREATE POLICY "Users can delete own orthomosaics" ON orthomosaic_projects
 
 -- Trigger for updated_at
 CREATE TRIGGER update_orthomosaic_projects_updated_at BEFORE UPDATE ON orthomosaic_projects
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  FOR EACH ROW EXECUTE FUNCTION drone.update_updated_at_column();
 

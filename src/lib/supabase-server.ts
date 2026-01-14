@@ -3,6 +3,9 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
+// Schema configuration for multi-project database setup
+const DB_SCHEMA = 'drone';
+
 /**
  * Create a Supabase client authenticated with an access token
  * This is used for API routes where we have the user's access token
@@ -10,7 +13,9 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
  */
 export async function createAuthenticatedSupabaseClient(accessToken: string): Promise<SupabaseClient> {
   // Verify the token first by getting the user
-  const tempClient = createClient(supabaseUrl, supabaseAnonKey);
+  const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
+    db: { schema: DB_SCHEMA },
+  });
   const { data: { user }, error: userError } = await tempClient.auth.getUser(accessToken);
   
   if (userError || !user) {
@@ -20,6 +25,9 @@ export async function createAuthenticatedSupabaseClient(accessToken: string): Pr
   // Create client with the token in headers for all requests
   // Supabase Postgres uses the Authorization header for RLS JWT verification
   const client = createClient(supabaseUrl, supabaseAnonKey, {
+    db: {
+      schema: DB_SCHEMA,
+    },
     global: {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -70,6 +78,9 @@ export async function createServerSupabaseClient(): Promise<SupabaseClient> {
 
     // Create client with cookie-based auth
     const client = createClient(supabaseUrl, supabaseAnonKey, {
+      db: {
+        schema: DB_SCHEMA,
+      },
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -92,6 +103,9 @@ export async function createServerSupabaseClient(): Promise<SupabaseClient> {
     // Fallback: create basic client without cookie support
     console.warn('Could not create Supabase client with cookies, using basic client:', error);
     return createClient(supabaseUrl, supabaseAnonKey, {
+      db: {
+        schema: DB_SCHEMA,
+      },
       auth: {
         persistSession: false,
         autoRefreshToken: false,

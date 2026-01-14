@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { Mission, fetchMission, saveMission, deleteMission } from '@/lib/supabase';
+import { Mission, fetchMission, saveMission, deleteMission, smoothMission } from '@/lib/supabase';
 import MapEditor from '@/components/MapEditor';
 import WaypointEditor from '@/components/WaypointEditor';
 import HowToGuide from '@/components/HowToGuide';
@@ -17,6 +17,12 @@ export default function MissionDetailPage() {
   const [mission, setMission] = useState<Mission | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [smoothing, setSmoothing] = useState(false);
+  const [showSmoothSettings, setShowSmoothSettings] = useState(false);
+  const [smoothSettings, setSmoothSettings] = useState({
+    toleranceM: 10,
+    minDistanceM: 15,
+  });
 
   useEffect(() => {
     if (!authLoading) {
@@ -80,6 +86,37 @@ export default function MissionDetailPage() {
       return;
     }
     downloadKMZ(mission);
+  };
+
+  const handleSmooth = () => {
+    if (!mission) return;
+    if (mission.waypoints.length <= 2) {
+      alert('Mission must have more than 2 waypoints to smooth.');
+      return;
+    }
+
+    const originalCount = mission.waypoints.length;
+    setSmoothing(true);
+    
+    try {
+      const smoothed = smoothMission(mission, {
+        toleranceM: smoothSettings.toleranceM,
+        minDistanceM: smoothSettings.minDistanceM,
+      });
+      
+      const newCount = smoothed.waypoints.length;
+      const reduction = originalCount - newCount;
+      
+      setMission(smoothed);
+      setShowSmoothSettings(false);
+      
+      alert(`Mission smoothed successfully!\nOriginal waypoints: ${originalCount}\nNew waypoints: ${newCount}\nReduced by: ${reduction} (${Math.round((reduction / originalCount) * 100)}%)`);
+    } catch (error) {
+      console.error('Failed to smooth mission:', error);
+      alert('Failed to smooth mission');
+    } finally {
+      setSmoothing(false);
+    }
   };
 
   const handleWaypointUpdate = (updatedWaypoint: Mission['waypoints'][number]) => {
@@ -150,6 +187,13 @@ export default function MissionDetailPage() {
                 Fleet
               </Link>
               <button
+                onClick={() => setShowSmoothSettings(!showSmoothSettings)}
+                className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700"
+                title="Smooth mission to reduce waypoint density"
+              >
+                {showSmoothSettings ? 'Hide Smooth' : 'Smooth Mission'}
+              </button>
+              <button
                 onClick={handleExport}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >
@@ -175,6 +219,72 @@ export default function MissionDetailPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <HowToGuide />
+
+        {/* Smooth Mission Settings */}
+        {showSmoothSettings && mission && mission.waypoints.length > 2 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6 border-2 border-purple-200">
+            <h3 className="text-lg font-semibold mb-3 text-gray-800">Smooth Mission Settings</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Simplify waypoints by removing points in straight sections while preserving action points (photos, video) and important turns.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tolerance (meters)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={smoothSettings.toleranceM}
+                  onChange={(e) => setSmoothSettings({
+                    ...smoothSettings,
+                    toleranceM: parseFloat(e.target.value) || 10
+                  })}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Maximum perpendicular distance (1-100m). Higher values remove more waypoints in straight sections.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Minimum Distance (meters)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={smoothSettings.minDistanceM}
+                  onChange={(e) => setSmoothSettings({
+                    ...smoothSettings,
+                    minDistanceM: parseFloat(e.target.value) || 15
+                  })}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Minimum distance between waypoints after smoothing (1-100m).
+                </p>
+              </div>
+            </div>
+            <div className="mb-4 text-sm text-gray-600">
+              <p className="font-medium mb-1">Current mission:</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Total waypoints: {mission.waypoints.length}</li>
+                <li>Action points (photos/video): {mission.waypoints.filter(wp => wp.actionType).length}</li>
+              </ul>
+            </div>
+            <button
+              onClick={handleSmooth}
+              disabled={smoothing}
+              className="px-6 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {smoothing ? 'Smoothing...' : 'Apply Smoothing'}
+            </button>
+          </div>
+        )}
 
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <div className="grid grid-cols-2 gap-4 mb-4">

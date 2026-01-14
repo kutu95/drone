@@ -4,7 +4,13 @@ import { Mission, Waypoint, MissionDB, WaypointDB, FlightLog, FlightLogDataPoint
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Create Supabase client with drone schema
+// This allows multiple projects to share the same database using different schemas
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  db: {
+    schema: 'drone',
+  },
+});
 
 // Convert DB format to frontend format
 export function missionFromDB(mission: MissionDB, waypoints: WaypointDB[]): Mission {
@@ -222,6 +228,492 @@ export async function deleteMission(id: string) {
   if (error) throw error;
 }
 
+/**
+ * Calculate haversine distance between two GPS coordinates in meters
+ */
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // Earth's radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Calculate the perpendicular distance from a point to a line segment
+ * Returns distance in meters
+ */
+function perpendicularDistance(
+  pointLat: number,
+  pointLon: number,
+  lineStartLat: number,
+  lineStartLon: number,
+  lineEndLat: number,
+  lineEndLon: number
+): number {
+  // Convert to radians
+  const pLat = pointLat * Math.PI / 180;
+  const pLon = pointLon * Math.PI / 180;
+  const sLat = lineStartLat * Math.PI / 180;
+  const sLon = lineStartLon * Math.PI / 180;
+  const eLat = lineEndLat * Math.PI / 180;
+  const eLon = lineEndLon * Math.PI / 180;
+
+  // Calculate bearing from start to end
+  const dLon = eLon - sLon;
+  const y = Math.sin(dLon) * Math.cos(eLat);
+  const x = Math.cos(sLat) * Math.sin(eLat) - Math.sin(sLat) * Math.cos(eLat) * Math.cos(dLon);
+  const bearing = Math.atan2(y, x);
+
+  // Calculate bearing from start to point
+  const dLonP = pLon - sLon;
+  const yP = Math.sin(dLonP) * Math.cos(pLat);
+  const xP = Math.cos(sLat) * Math.sin(pLat) - Math.sin(sLat) * Math.cos(pLat) * Math.cos(dLonP);
+  const bearingP = Math.atan2(yP, xP);
+
+  // Calculate distance from start to point
+  const distToPoint = haversineDistance(lineStartLat, lineStartLon, pointLat, pointLon);
+
+  // Calculate perpendicular distance using cross-track distance formula
+  const angleDiff = bearingP - bearing;
+  const crossTrackDistance = Math.asin(Math.sin(distToPoint / 6371000) * Math.sin(angleDiff)) * 6371000;
+  
+  return Math.abs(crossTrackDistance);
+}
+
+/**
+ * Calculate bearing between two GPS coordinates in degrees
+ */
+function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const lat1Rad = lat1 * Math.PI / 180;
+  const lat2Rad = lat2 * Math.PI / 180;
+  
+  const y = Math.sin(dLon) * Math.cos(lat2Rad);
+  const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+  
+  let bearing = Math.atan2(y, x) * 180 / Math.PI;
+  bearing = (bearing + 360) % 360; // Normalize to 0-360
+  return bearing;
+}
+
+/**
+ * Convert flight log data points to mission waypoints
+ * Intelligently samples points to create a replayable mission
+ * Prioritizes action points (photos, video start/stop) and reduces total waypoint count
+ */
+export function flightLogToMissionWaypoints(
+  dataPoints: FlightLogDataPoint[],
+  options: {
+    minDistanceM?: number; // Minimum distance between waypoints (default: 25m)
+    maxWaypoints?: number; // Maximum number of waypoints (default: 150)
+    includeAllPhotos?: boolean; // Always include photo points (default: true)
+    includeVideoActions?: boolean; // Always include video start/stop points (default: true)
+    includeDirectionChanges?: boolean; // Include points with significant direction changes (default: true)
+    directionChangeThreshold?: number; // Minimum bearing change in degrees to include (default: 30)
+  } = {}
+): Waypoint[] {
+  const {
+    minDistanceM = 25, // Increased from 5m to 25m to reduce waypoints
+    maxWaypoints = 150, // Reduced from 500 to 150
+    includeAllPhotos = true,
+    includeVideoActions = true,
+    includeDirectionChanges = true,
+    directionChangeThreshold = 30, // Increased from 15 to 30 degrees for more selective turns
+  } = options;
+
+  if (!dataPoints || dataPoints.length === 0) {
+    return [];
+  }
+
+  // Filter to only points with valid GPS coordinates
+  const validPoints = dataPoints.filter(dp => dp.lat !== undefined && dp.lng !== undefined);
+  if (validPoints.length === 0) {
+    return [];
+  }
+
+  // Sort by timestamp
+  const sortedPoints = [...validPoints].sort((a, b) => a.timestampOffsetMs - b.timestampOffsetMs);
+
+  const waypoints: Waypoint[] = [];
+  const includedIndices = new Set<number>();
+
+  // Reserve space for start and end points (always included)
+  const reservedSlots = 2;
+  const availableSlots = maxWaypoints - reservedSlots;
+
+  // Always include first point (start)
+  includedIndices.add(0);
+  waypoints.push({
+    id: `wp-0`,
+    index: 0,
+    lat: sortedPoints[0].lat!,
+    lng: sortedPoints[0].lng!,
+    altitudeM: sortedPoints[0].altitudeM,
+    speedMps: sortedPoints[0].speedMps,
+    headingDeg: sortedPoints[0].headingDeg,
+    gimbalPitchDeg: sortedPoints[0].gimbalPitchDeg,
+    actionType: undefined,
+  });
+
+  // Always include action points (photos, video start/stop) - these are critical
+  // But respect the maxWaypoints limit (reserving space for end point)
+  sortedPoints.forEach((point, idx) => {
+    // Check if we've reached the limit (reserving 1 slot for end point)
+    if (waypoints.length >= maxWaypoints - 1) return;
+    if (includedIndices.has(idx)) return;
+    
+    let actionType: string | undefined;
+    
+    if (includeAllPhotos && point.isPhoto) {
+      actionType = 'photo';
+    } else if (includeVideoActions && point.isVideoRecording !== undefined) {
+      // Check if this is a video start or stop by comparing with previous point
+      const prevPoint = idx > 0 ? sortedPoints[idx - 1] : null;
+      const wasRecording = prevPoint?.isVideoRecording ?? false;
+      const isRecording = point.isVideoRecording ?? false;
+      
+      if (!wasRecording && isRecording) {
+        actionType = 'video_start';
+      } else if (wasRecording && !isRecording) {
+        actionType = 'video_stop';
+      }
+    }
+    
+    if (actionType) {
+      includedIndices.add(idx);
+      waypoints.push({
+        id: `wp-${idx}`,
+        index: waypoints.length,
+        lat: point.lat!,
+        lng: point.lng!,
+        altitudeM: point.altitudeM,
+        speedMps: point.speedMps,
+        headingDeg: point.headingDeg,
+        gimbalPitchDeg: point.gimbalPitchDeg,
+        actionType,
+      });
+    }
+  });
+
+  // Include points with significant direction changes
+  // But respect the maxWaypoints limit (reserving space for end point)
+  if (includeDirectionChanges && sortedPoints.length > 2) {
+    for (let i = 1; i < sortedPoints.length - 1; i++) {
+      // Check if we've reached the limit (reserving 1 slot for end point)
+      if (waypoints.length >= maxWaypoints - 1) break;
+      if (includedIndices.has(i)) continue;
+
+      const prev = sortedPoints[i - 1];
+      const curr = sortedPoints[i];
+      const next = sortedPoints[i + 1];
+
+      if (!prev.lat || !prev.lng || !curr.lat || !curr.lng || !next.lat || !next.lng) {
+        continue;
+      }
+
+      const bearing1 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
+      const bearing2 = calculateBearing(curr.lat, curr.lng, next.lat, next.lng);
+      
+      let bearingDiff = Math.abs(bearing2 - bearing1);
+      if (bearingDiff > 180) {
+        bearingDiff = 360 - bearingDiff;
+      }
+
+      if (bearingDiff >= directionChangeThreshold) {
+        includedIndices.add(i);
+        waypoints.push({
+          id: `wp-${i}`,
+          index: waypoints.length,
+          lat: curr.lat,
+          lng: curr.lng,
+          altitudeM: curr.altitudeM,
+          speedMps: curr.speedMps,
+          headingDeg: curr.headingDeg,
+          gimbalPitchDeg: curr.gimbalPitchDeg,
+          actionType: curr.isPhoto ? 'photo' : undefined,
+        });
+      }
+    }
+  }
+
+  // Sample remaining points based on distance threshold
+  // This fills in the gaps between action points and direction changes
+  // Respect the maxWaypoints limit (reserving space for end point)
+  let lastIncludedIdx = 0;
+  for (let i = 1; i < sortedPoints.length; i++) {
+    if (includedIndices.has(i)) {
+      lastIncludedIdx = i;
+      continue;
+    }
+
+    // Stop if we've reached the max waypoints (reserving 1 slot for end point)
+    if (waypoints.length >= maxWaypoints - 1) {
+      break;
+    }
+
+    const lastIncluded = sortedPoints[lastIncludedIdx];
+    const current = sortedPoints[i];
+
+    if (!lastIncluded.lat || !lastIncluded.lng || !current.lat || !current.lng) {
+      continue;
+    }
+
+    const distance = haversineDistance(
+      lastIncluded.lat,
+      lastIncluded.lng,
+      current.lat,
+      current.lng
+    );
+
+    // Only add waypoint if it's far enough from the last one
+    // This ensures we don't create too many waypoints while preserving the path shape
+    if (distance >= minDistanceM) {
+      includedIndices.add(i);
+      waypoints.push({
+        id: `wp-${i}`,
+        index: waypoints.length,
+        lat: current.lat,
+        lng: current.lng,
+        altitudeM: current.altitudeM,
+        speedMps: current.speedMps,
+        headingDeg: current.headingDeg,
+        gimbalPitchDeg: current.gimbalPitchDeg,
+        // Don't set actionType here - it's already set if this point has an action
+        actionType: current.isPhoto ? 'photo' : undefined,
+      });
+      lastIncludedIdx = i;
+    }
+  }
+
+  // Always include last point (end) if not already included
+  // Only add if we haven't exceeded the limit
+  const lastIdx = sortedPoints.length - 1;
+  if (!includedIndices.has(lastIdx) && waypoints.length < maxWaypoints) {
+    const lastPoint = sortedPoints[lastIdx];
+    waypoints.push({
+      id: `wp-${lastIdx}`,
+      index: waypoints.length,
+      lat: lastPoint.lat!,
+      lng: lastPoint.lng!,
+      altitudeM: lastPoint.altitudeM,
+      speedMps: lastPoint.speedMps,
+      headingDeg: lastPoint.headingDeg,
+      gimbalPitchDeg: lastPoint.gimbalPitchDeg,
+      actionType: lastPoint.isPhoto ? 'photo' : undefined,
+    });
+  }
+
+  // Re-index waypoints sequentially
+  waypoints.forEach((wp, idx) => {
+    wp.index = idx;
+    wp.id = `wp-${idx}`;
+  });
+
+  return waypoints;
+}
+
+/**
+ * Create a mission from a flight log
+ */
+export async function createMissionFromFlightLog(
+  flightLog: FlightLog,
+  missionName?: string,
+  options?: {
+    minDistanceM?: number;
+    maxWaypoints?: number;
+    includeAllPhotos?: boolean;
+    includeVideoActions?: boolean;
+    includeDirectionChanges?: boolean;
+    directionChangeThreshold?: number;
+  }
+): Promise<Mission> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  if (!flightLog.dataPoints || flightLog.dataPoints.length === 0) {
+    throw new Error('Flight log has no data points');
+  }
+
+  // Convert data points to waypoints
+  // Using configurable filtering to reduce waypoint count while preserving actions
+  const waypoints = flightLogToMissionWaypoints(flightLog.dataPoints, {
+    minDistanceM: options?.minDistanceM ?? 25, // Default: 25 meters minimum between waypoints
+    maxWaypoints: options?.maxWaypoints ?? 150, // Default: Maximum 150 waypoints
+    includeAllPhotos: options?.includeAllPhotos ?? true, // Always include photo points
+    includeVideoActions: options?.includeVideoActions ?? true, // Always include video start/stop points
+    includeDirectionChanges: options?.includeDirectionChanges ?? true,
+    directionChangeThreshold: options?.directionChangeThreshold ?? 30, // Default: 30 degree direction changes
+  });
+
+  if (waypoints.length === 0) {
+    throw new Error('Could not create waypoints from flight log');
+  }
+
+  // Calculate average altitude and speed for defaults
+  const altitudes = waypoints
+    .map(wp => wp.altitudeM)
+    .filter((alt): alt is number => alt !== undefined);
+  const speeds = waypoints
+    .map(wp => wp.speedMps)
+    .filter((speed): speed is number => speed !== undefined);
+
+  const avgAltitude = altitudes.length > 0
+    ? altitudes.reduce((sum, alt) => sum + alt, 0) / altitudes.length
+    : 60;
+  const avgSpeed = speeds.length > 0
+    ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length
+    : 5;
+
+  // Create mission
+  const mission: Mission = {
+    id: '',
+    name: missionName || `Mission from ${flightLog.filename}`,
+    description: `Created from flight log: ${flightLog.filename}${flightLog.flightDate ? ` (${new Date(flightLog.flightDate).toLocaleDateString()})` : ''}\n${waypoints.length} waypoints (${waypoints.filter(wp => wp.actionType === 'photo').length} photo points)`,
+    droneModel: flightLog.droneModel || 'DJI Air 3',
+    homeLocation: flightLog.homeLocation,
+    defaultAltitudeM: Math.round(avgAltitude),
+    defaultSpeedMps: Math.round(avgSpeed * 10) / 10, // Round to 1 decimal
+    waypoints,
+  };
+
+  // Save mission
+  return await saveMission(mission);
+}
+
+/**
+ * Smooth/simplify a mission by reducing waypoint density in straight sections
+ * Preserves action points (photos, video) and important turns
+ */
+export function smoothMission(
+  mission: Mission,
+  options: {
+    toleranceM?: number; // Maximum perpendicular distance in meters to simplify (default: 10m)
+    minDistanceM?: number; // Minimum distance between waypoints after smoothing (default: 15m)
+  } = {}
+): Mission {
+  const {
+    toleranceM = 10, // Default: 10 meters tolerance
+    minDistanceM = 15, // Default: 15 meters minimum distance
+  } = options;
+
+  if (!mission.waypoints || mission.waypoints.length <= 2) {
+    return mission; // Can't simplify missions with 2 or fewer waypoints
+  }
+
+  const waypoints = [...mission.waypoints].sort((a, b) => a.index - b.index);
+  const keptIndices = new Set<number>();
+
+  // Always keep first waypoint (start)
+  keptIndices.add(0);
+
+  // Always keep waypoints with actions (photos, video)
+  waypoints.forEach((wp, idx) => {
+    if (wp.actionType) {
+      keptIndices.add(idx);
+    }
+  });
+
+  // Always keep last waypoint (end)
+  keptIndices.add(waypoints.length - 1);
+
+  // Simplify using a modified Douglas-Peucker algorithm
+  // This recursively simplifies segments while preserving action points
+  function simplifySegment(startIdx: number, endIdx: number) {
+    if (endIdx - startIdx < 2) {
+      return;
+    }
+
+    const start = waypoints[startIdx];
+    const end = waypoints[endIdx];
+
+    // Find the point with maximum perpendicular distance from the line segment
+    let maxDist = 0;
+    let maxIdx = -1;
+
+    for (let i = startIdx + 1; i < endIdx; i++) {
+      // Skip if this point must be kept (has action or is already marked)
+      if (keptIndices.has(i)) {
+        // If we encounter a kept point, we need to simplify segments on both sides
+        simplifySegment(startIdx, i);
+        simplifySegment(i, endIdx);
+        return;
+      }
+
+      const dist = perpendicularDistance(
+        waypoints[i].lat,
+        waypoints[i].lng,
+        start.lat,
+        start.lng,
+        end.lat,
+        end.lng
+      );
+
+      if (dist > maxDist) {
+        maxDist = dist;
+        maxIdx = i;
+      }
+    }
+
+    // If max distance is greater than tolerance, recursively simplify both segments
+    if (maxDist > toleranceM && maxIdx > 0) {
+      keptIndices.add(maxIdx);
+      simplifySegment(startIdx, maxIdx);
+      simplifySegment(maxIdx, endIdx);
+    }
+    // Otherwise, all points between start and end are within tolerance and can be removed
+  }
+
+  // Simplify the entire path
+  simplifySegment(0, waypoints.length - 1);
+
+  // Build the simplified waypoint list, preserving order
+  const simplified = waypoints
+    .filter((wp, idx) => keptIndices.has(idx))
+    .map((wp, idx) => ({
+      ...wp,
+      index: idx,
+      id: `wp-${idx}`,
+    }));
+
+  // Apply minimum distance filter to remove waypoints that are too close together
+  // (but always keep action points and start/end)
+  const finalWaypoints: typeof simplified = [];
+  for (let i = 0; i < simplified.length; i++) {
+    const current = simplified[i];
+    
+    // Always keep first, last, and action points
+    if (i === 0 || i === simplified.length - 1 || current.actionType) {
+      finalWaypoints.push(current);
+      continue;
+    }
+
+    // Check distance to previous waypoint
+    const prev = finalWaypoints[finalWaypoints.length - 1];
+    const dist = haversineDistance(prev.lat, prev.lng, current.lat, current.lng);
+    
+    if (dist >= minDistanceM) {
+      finalWaypoints.push(current);
+    }
+    // Otherwise skip this waypoint (it's too close to the previous one)
+  }
+
+  // Re-index final waypoints
+  finalWaypoints.forEach((wp, idx) => {
+    wp.index = idx;
+    wp.id = `wp-${idx}`;
+  });
+
+  return {
+    ...mission,
+    waypoints: finalWaypoints,
+  };
+}
+
 // Flight Log Functions
 
 // Convert DB format to frontend format
@@ -427,6 +919,7 @@ export async function fetchFlightLogs() {
   if (logIds.length > 0) {
     try {
       // Use the database function to get aggregated counts in a single query
+      // Note: RPC functions need to be called with schema prefix if not in search_path
       const { data, error: rpcError } = await supabase.rpc('get_photo_counts', {
         log_ids: logIds
       });

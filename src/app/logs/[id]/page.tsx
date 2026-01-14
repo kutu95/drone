@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { FlightLog, fetchFlightLog, deleteFlightLog, getAdjacentFlightLogIds } from '@/lib/supabase';
+import { FlightLog, fetchFlightLog, deleteFlightLog, getAdjacentFlightLogIds, createMissionFromFlightLog } from '@/lib/supabase';
 import FlightLogViewer from '@/components/FlightLogViewer';
 import OrthomosaicProcessor from '@/components/OrthomosaicProcessor';
 import Link from 'next/link';
@@ -184,6 +184,12 @@ export default function FlightLogDetailPage() {
   const [nextLogId, setNextLogId] = useState<string | null>(null);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
   const [batteryLabel, setBatteryLabel] = useState<string | null>(null);
+  const [creatingMission, setCreatingMission] = useState(false);
+  const [showMissionSettings, setShowMissionSettings] = useState(false);
+  const [missionSettings, setMissionSettings] = useState({
+    maxWaypoints: 150,
+    minDistanceM: 25,
+  });
   const loadedLogIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -302,6 +308,46 @@ export default function FlightLogDetailPage() {
     }
   };
 
+  const handleCreateMission = async () => {
+    if (!flightLog) return;
+    
+    if (!flightLog.dataPoints || flightLog.dataPoints.length === 0) {
+      alert('This flight log has no GPS data points. Cannot create a mission.');
+      return;
+    }
+
+    // Validate settings
+    if (missionSettings.maxWaypoints < 1 || missionSettings.maxWaypoints > 1000) {
+      alert('Maximum waypoints must be between 1 and 1000');
+      return;
+    }
+    if (missionSettings.minDistanceM < 1 || missionSettings.minDistanceM > 1000) {
+      alert('Minimum distance must be between 1 and 1000 meters');
+      return;
+    }
+
+    const missionName = prompt('Enter a name for the mission:', `Mission from ${flightLog.filename}`);
+    if (!missionName) return; // User cancelled
+
+    setCreatingMission(true);
+    try {
+      const mission = await createMissionFromFlightLog(flightLog, missionName, {
+        maxWaypoints: missionSettings.maxWaypoints,
+        minDistanceM: missionSettings.minDistanceM,
+        includeAllPhotos: true,
+        includeVideoActions: true,
+        includeDirectionChanges: true,
+        directionChangeThreshold: 30,
+      });
+      router.push(`/missions/${mission.id}`);
+    } catch (error) {
+      console.error('Failed to create mission:', error);
+      alert(`Failed to create mission: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setCreatingMission(false);
+    }
+  };
+
   const handleSignOut = async () => {
     const { supabase } = await import('@/lib/supabase');
     await supabase.auth.signOut();
@@ -398,15 +444,96 @@ export default function FlightLogDetailPage() {
           <div className="p-6 pb-4">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-2xl font-bold">Flight Statistics</h2>
-              {flightLog.dataPoints && flightLog.dataPoints.filter(dp => dp.isPhoto && dp.originalFileUrl).length > 0 && (
-                <OrthomosaicProcessor 
-                  flightLog={flightLog}
-                  onComplete={() => {
-                    // Optionally refresh or navigate
-                  }}
-                />
-              )}
+              <div className="flex gap-2">
+                {flightLog.dataPoints && flightLog.dataPoints.length > 0 && (
+                  <div className="flex gap-2 items-center">
+                    <button
+                      onClick={() => setShowMissionSettings(!showMissionSettings)}
+                      className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                      title="Configure mission creation settings"
+                    >
+                      ⚙️ Settings
+                    </button>
+                    <button
+                      onClick={handleCreateMission}
+                      disabled={creatingMission}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title="Create a mission from this flight log to replay the exact path"
+                    >
+                      {creatingMission ? 'Creating Mission...' : 'Create Mission from Flight'}
+                    </button>
+                  </div>
+                )}
+                {flightLog.dataPoints && flightLog.dataPoints.filter(dp => dp.isPhoto && dp.originalFileUrl).length > 0 && (
+                  <OrthomosaicProcessor 
+                    flightLog={flightLog}
+                    onComplete={() => {
+                      // Optionally refresh or navigate
+                    }}
+                  />
+                )}
+              </div>
             </div>
+            {/* Mission Creation Settings */}
+            {showMissionSettings && flightLog.dataPoints && flightLog.dataPoints.length > 0 && (
+              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h3 className="text-lg font-semibold mb-3 text-gray-800">Mission Creation Settings</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Maximum Waypoints
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={missionSettings.maxWaypoints}
+                      onChange={(e) => setMissionSettings({
+                        ...missionSettings,
+                        maxWaypoints: parseInt(e.target.value) || 150
+                      })}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Maximum number of waypoints in the mission (1-1000). Action points (photos, video) are always included.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Minimum Distance Between Waypoints (meters)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      step="1"
+                      value={missionSettings.minDistanceM}
+                      onChange={(e) => setMissionSettings({
+                        ...missionSettings,
+                        minDistanceM: parseFloat(e.target.value) || 25
+                      })}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Minimum distance in meters between waypoints (1-1000). Larger values create fewer waypoints.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 text-sm text-gray-600">
+                  <p className="font-medium">Note:</p>
+                  <ul className="list-disc list-inside mt-1 space-y-1">
+                    <li>Photo points and video start/stop points are always included regardless of distance</li>
+                    <li>Points with significant direction changes (30°+) are included</li>
+                    <li>Start and end points are always included</li>
+                    <li>Current settings will create approximately {Math.min(
+                      Math.ceil((flightLog.totalDistanceM || 0) / missionSettings.minDistanceM) + 
+                      (flightLog.dataPoints?.filter(dp => dp.isPhoto).length || 0) + 2,
+                      missionSettings.maxWaypoints
+                    )} waypoints</li>
+                  </ul>
+                </div>
+              </div>
+            )}
             {/* Top line with key stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>

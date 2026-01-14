@@ -33,6 +33,10 @@ DJI_LOG_PARSER_PATH=/path/to/dji-log-parser
 
 # DCRAW Configuration (for DNG file processing/thumbnails)
 DCRAW_PATH=/usr/bin/dcraw
+
+# Photoprism Configuration (for DNG file uploads)
+PHOTOPRISM_URL=http://your-photoprism-instance:2342
+PHOTOPRISM_ACCESS_TOKEN=your-photoprism-access-token
 ```
 
 ## Notes
@@ -41,6 +45,8 @@ DCRAW_PATH=/usr/bin/dcraw
 - **DJI API Key**: Required for parsing flight log files version 13+. See `docs/getting-dji-api-key.md` for setup instructions.
 - **DJI Log Parser Path**: Only needed if you want to use the CLI parser for accurate GPS coordinates. Binary must match server architecture (Linux x86_64).
 - **DCRAW Path**: Only needed for DNG file processing. Usually at `/usr/bin/dcraw` on Linux systems.
+- **Photoprism URL**: URL of your Photoprism instance (e.g., `http://localhost:2342` or `https://photoprism.example.com`). If not configured, DNG files will still be processed for thumbnails but won't be uploaded to Photoprism.
+- **Photoprism Access Token**: Access token for Photoprism API authentication. Generate using `photoprism auth add -n "DroneApp" -s "files folders"` or through the Photoprism web interface (Settings > Account > Apps and Devices).
 
 ## Getting Values
 

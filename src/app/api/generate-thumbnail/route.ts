@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient, createAuthenticatedSupabaseClient } from '@/lib/supabase-server';
 import sharp from 'sharp';
 import { decodeDNGWithDCRAW } from '@/lib/dng-decoder-cli';
+import { uploadFileToPhotoprism } from '@/lib/photoprism';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -87,6 +88,27 @@ export async function POST(request: NextRequest) {
                   filename?.toLowerCase().endsWith('.dng') ||
                   buffer.slice(0, 8).toString('ascii').includes('II') || // TIFF header
                   buffer.slice(0, 8).toString('ascii').includes('MM'); // TIFF header (big endian)
+
+    // Upload original DNG file to Photoprism if it's a DNG
+    let photoprismUploadResult: { uid: string; name: string } | null = null;
+    if (isDNG) {
+      try {
+        console.log(`Uploading DNG file ${filename || file.name} to Photoprism...`);
+        photoprismUploadResult = await uploadFileToPhotoprism(
+          buffer,
+          filename || file.name,
+          'image/x-adobe-dng'
+        );
+        if (photoprismUploadResult) {
+          console.log(`✓ Successfully uploaded to Photoprism: ${photoprismUploadResult.uid}`);
+        } else {
+          console.warn('Photoprism upload failed or not configured (continuing with thumbnail generation)');
+        }
+      } catch (error) {
+        console.error('Error uploading to Photoprism (continuing anyway):', error);
+        // Don't fail the entire request if Photoprism upload fails
+      }
+    }
 
     let thumbnailBuffer: Buffer;
     let mimeType = 'image/jpeg';
@@ -300,7 +322,7 @@ export async function POST(request: NextRequest) {
         { 
           error: errorMessage,
           details: uploadError.message || 'Unknown storage error',
-          errorCode: uploadError.statusCode || uploadError.code,
+          errorCode: uploadError.code || undefined,
           fullError: process.env.NODE_ENV === 'development' ? JSON.stringify(uploadError, Object.getOwnPropertyNames(uploadError)) : undefined
         },
         { status: 500 }
@@ -316,6 +338,10 @@ export async function POST(request: NextRequest) {
       success: true,
       thumbnailUrl: urlData.publicUrl,
       filename: thumbnailFilename,
+      photoprismUpload: photoprismUploadResult ? {
+        uid: photoprismUploadResult.uid,
+        name: photoprismUploadResult.name,
+      } : null,
     });
   } catch (error) {
     console.error('Error generating thumbnail:', error);

@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Create battery_stats table to cache aggregated battery statistics
 -- This dramatically speeds up the battery monitoring page by avoiding recalculation
 CREATE TABLE IF NOT EXISTS battery_stats (

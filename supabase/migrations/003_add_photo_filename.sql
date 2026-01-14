@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Add photo_filename column to flight_log_data_points table
 ALTER TABLE flight_log_data_points 
 ADD COLUMN IF NOT EXISTS photo_filename TEXT;

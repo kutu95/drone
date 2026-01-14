@@ -42,7 +42,24 @@ Welcome! This is your complete deployment guide for the Drone app using GitHub.
    - Environment variables template
    - Required vs optional variables
 
+### For Database Migration
+
+7. **[DATABASE_MIGRATION_GUIDE.md](contexts/DATABASE_MIGRATION_GUIDE.md)**
+   - Complete guide for migrating database from cloud to local
+   - Step-by-step instructions
+   - Troubleshooting
+
+8. **[DATABASE_MIGRATION_QUICKSTART.md](contexts/DATABASE_MIGRATION_QUICKSTART.md)**
+   - Quick reference for database migration
+   - 5-step process
+   - Common commands
+
 ## 🔧 Scripts
+
+- **`setup-github.sh`** - Initialize git and prepare for GitHub
+- **`server-deploy.sh`** - Server-side deployment script (pulls, builds, restarts)
+- **`prepare-deployment.sh`** - Check your environment variables
+- **`migrate-database.sh`** - Automated database migration script
 
 - **`setup-github.sh`** - Initialize git and prepare for GitHub
 - **`server-deploy.sh`** - Server-side deployment script (pulls, builds, restarts)
@@ -56,9 +73,10 @@ Welcome! This is your complete deployment guide for the Drone app using GitHub.
 2. ✅ Create GitHub repository
 3. ✅ Push code to GitHub
 4. ✅ Clone on server
-5. ✅ Configure environment variables
-6. ✅ Build and start with PM2
-7. ✅ Setup domain with Cloudflare Tunnel
+5. ✅ Migrate database to local Supabase (see `contexts/DATABASE_MIGRATION_GUIDE.md`)
+6. ✅ Configure environment variables
+7. ✅ Build and start with PM2
+8. ✅ Setup domain with Cloudflare Tunnel
 
 ### Making Updates
 
@@ -104,6 +122,7 @@ See `ENV_VARIABLES_REFERENCE.md` for complete list.
 2. **Deployment Errors?** → See troubleshooting in `GITHUB_DEPLOYMENT_GUIDE.md`
 3. **Server Setup?** → See `DEPLOYMENT_GUIDE.md`
 4. **Environment Variables?** → See `ENV_VARIABLES_REFERENCE.md`
+5. **Database Migration?** → See `contexts/DATABASE_MIGRATION_GUIDE.md`
 
 ## 🎓 Learning Resources
 

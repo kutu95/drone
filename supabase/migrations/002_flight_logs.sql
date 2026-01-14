@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Flight logs table
 CREATE TABLE IF NOT EXISTS flight_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -107,5 +111,5 @@ CREATE POLICY "Users can delete data points from own flight logs" ON flight_log_
 
 -- Trigger for updated_at
 CREATE TRIGGER update_flight_logs_updated_at BEFORE UPDATE ON flight_logs
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  FOR EACH ROW EXECUTE FUNCTION drone.update_updated_at_column();
 

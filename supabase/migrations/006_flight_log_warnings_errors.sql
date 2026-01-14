@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Flight log warnings and errors table
 CREATE TABLE IF NOT EXISTS flight_log_warnings_errors (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

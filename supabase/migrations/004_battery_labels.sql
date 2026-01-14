@@ -1,3 +1,7 @@
+-- Set schema context for this migration
+-- Includes tryon_schema for multi-app database support
+SET search_path TO drone, tryon_schema, public;
+
 -- Battery labels table - allows users to assign custom labels to batteries
 CREATE TABLE IF NOT EXISTS battery_labels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -31,5 +35,5 @@ CREATE POLICY "Users can delete own battery labels" ON battery_labels
 
 -- Trigger for updated_at
 CREATE TRIGGER update_battery_labels_updated_at BEFORE UPDATE ON battery_labels
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  FOR EACH ROW EXECUTE FUNCTION drone.update_updated_at_column();
 

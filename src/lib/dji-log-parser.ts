@@ -723,11 +723,11 @@ export async function parseDJILogFile(file: File): Promise<ParsedLogResult> {
  * Validate that a file appears to be a DJI log file
  */
 export function validateDJILogFile(file: File): { valid: boolean; error?: string } {
-  // Check filename pattern
-  if (!file.name.match(/DJIFlightRecord_\d{4}-\d{2}-\d{2}_\[\d{2}-\d{2}-\d{2}\]\.txt$/)) {
+  // Check filename pattern - accept both DJIFlightRecord_ and FlightRecord_ formats
+  if (!file.name.match(/(DJI)?FlightRecord_\d{4}-\d{2}-\d{2}_\[\d{2}-\d{2}-\d{2}\]\.txt$/)) {
     return {
       valid: false,
-      error: 'File does not match DJI flight log naming pattern (DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt)',
+      error: 'File does not match DJI flight log naming pattern (FlightRecord_YYYY-MM-DD_[HH-MM-SS].txt or DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt)',
     };
   }
 

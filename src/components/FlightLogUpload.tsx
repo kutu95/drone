@@ -177,7 +177,8 @@ export default function FlightLogUpload({ onUploadComplete, onError }: FlightLog
     const invalidFiles: string[] = [];
 
     files.forEach(file => {
-      if (file.name.match(/DJIFlightRecord_\d{4}-\d{2}-\d{2}_\[\d{2}-\d{2}-\d{2}\]\.txt$/)) {
+      // Accept both DJIFlightRecord_ and FlightRecord_ formats
+      if (file.name.match(/(DJI)?FlightRecord_\d{4}-\d{2}-\d{2}_\[\d{2}-\d{2}-\d{2}\]\.txt$/)) {
         validFiles.push(file);
       } else {
         invalidFiles.push(file.name);
@@ -185,7 +186,7 @@ export default function FlightLogUpload({ onUploadComplete, onError }: FlightLog
     });
 
     if (invalidFiles.length > 0) {
-      onError?.(`Invalid file format. Expected DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt. Invalid files: ${invalidFiles.join(', ')}`);
+      onError?.(`Invalid file format. Expected FlightRecord_YYYY-MM-DD_[HH-MM-SS].txt or DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt. Invalid files: ${invalidFiles.join(', ')}`);
     }
 
     if (validFiles.length === 0) {
@@ -586,7 +587,7 @@ export default function FlightLogUpload({ onUploadComplete, onError }: FlightLog
                   : 'Click to select or drag and drop .txt file(s) from your RC2 controller'}
               </p>
               <p className="text-xs text-gray-400 mt-2">
-                Expected format: DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt (multiple files supported)
+                Expected format: FlightRecord_YYYY-MM-DD_[HH-MM-SS].txt or DJIFlightRecord_YYYY-MM-DD_[HH-MM-SS].txt (multiple files supported)
               </p>
             </div>
           </div>
