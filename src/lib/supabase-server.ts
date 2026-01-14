@@ -119,7 +119,7 @@ export async function createServerSupabaseClient(): Promise<SupabaseClient> {
  * Check if a flight log with the given filename already exists for a user
  */
 export async function checkFlightLogExistsWithClient(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   ownerId: string,
   filename: string
 ): Promise<boolean> {
@@ -199,7 +199,7 @@ export async function registerDroneFromLog(
  * Save flight log using a server-side Supabase client
  */
 export async function saveFlightLogWithClient(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   ownerId: string,
   flightLog: Partial<import('./types').FlightLog>
 ) {
