@@ -1091,16 +1091,16 @@ export default function FlightLogDetailPage() {
         {flightLog.dataPoints && flightLog.dataPoints.filter(dp => dp.isPhoto === true).length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-xl font-bold mb-4">
-              Photos Taken ({flightLog.dataPoints.filter(dp => dp.isPhoto === true).length})
+              Photos Taken ({flightLog.dataPoints?.filter(dp => dp.isPhoto === true).length || 0})
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {flightLog.dataPoints
-                .filter(dp => dp.isPhoto === true && dp.lat !== undefined && dp.lng !== undefined)
+                ?.filter(dp => dp.isPhoto === true && dp.lat !== undefined && dp.lng !== undefined)
                 .map((photo, index) => {
                   // Find the index of this photo in the filtered photos array for modal
                   const photoIndex = flightLog.dataPoints
-                    .filter(dp => dp.isPhoto === true && dp.lat !== undefined && dp.lng !== undefined)
-                    .findIndex(dp => dp.timestampOffsetMs === photo.timestampOffsetMs);
+                    ?.filter(dp => dp.isPhoto === true && dp.lat !== undefined && dp.lng !== undefined)
+                    .findIndex(dp => dp.timestampOffsetMs === photo.timestampOffsetMs) ?? -1;
                   
                   return (
                     <div
