@@ -160,7 +160,7 @@ export async function GET(request: NextRequest) {
           })
           .toBuffer();
 
-        return new NextResponse(jpegBuffer, {
+        return new NextResponse(new Uint8Array(jpegBuffer), {
           headers: {
             'Content-Type': 'image/jpeg',
             'Content-Length': jpegBuffer.length.toString(),
