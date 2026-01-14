@@ -322,7 +322,6 @@ export async function POST(request: NextRequest) {
         { 
           error: errorMessage,
           details: uploadError.message || 'Unknown storage error',
-          errorCode: uploadError.code || undefined,
           fullError: process.env.NODE_ENV === 'development' ? JSON.stringify(uploadError, Object.getOwnPropertyNames(uploadError)) : undefined
         },
         { status: 500 }
