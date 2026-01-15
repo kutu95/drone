@@ -404,7 +404,8 @@ export default function FlightLogUpload({ onUploadComplete, onError }: FlightLog
 
         // Read all image files
         const photoFiles: Array<{ file: File; filename: string }> = [];
-        for await (const entry of dateFolderHandle.values()) {
+        // FileSystemDirectoryHandle is an async iterable of [name, handle]
+        for await (const [name, entry] of dateFolderHandle as any) {
           if (entry.kind === 'file') {
             const file = await entry.getFile();
             const filename = file.name.toLowerCase();
@@ -413,7 +414,7 @@ export default function FlightLogUpload({ onUploadComplete, onError }: FlightLog
                 filename.endsWith('.nef') || filename.endsWith('.arw')) {
               photoFiles.push({
                 file,
-                filename: entry.name,
+                filename: name,
               });
             }
           }
