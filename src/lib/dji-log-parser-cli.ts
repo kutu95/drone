@@ -331,7 +331,7 @@ export async function parseDJILogWithCLI(
           framesLength: parsedOutput.frames?.length || 0,
           hasVersion: !!parsedOutput.version,
           hasDetails: !!parsedOutput.details,
-          outputSize: outputContent.length,
+          outputSize: outputContent?.length ?? 0,
         });
         
         // Include structure info in error for debugging
