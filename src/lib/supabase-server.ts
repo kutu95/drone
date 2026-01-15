@@ -11,7 +11,9 @@ const DB_SCHEMA = 'drone';
  * This is used for API routes where we have the user's access token
  * The client will include the Authorization header in all requests for RLS
  */
-export async function createAuthenticatedSupabaseClient(accessToken: string): Promise<SupabaseClient> {
+export async function createAuthenticatedSupabaseClient(
+  accessToken: string,
+): Promise<SupabaseClient<any, any, any, any, any>> {
   // Verify the token first by getting the user
   const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
     db: { schema: DB_SCHEMA },
@@ -68,51 +70,21 @@ export async function createAuthenticatedSupabaseClient(accessToken: string): Pr
 
 /**
  * Create a Supabase client for server-side operations (API routes, server components)
- * For API routes, we primarily use token-based auth from Authorization header
+ * We use the configured DB schema (`drone`) and disable client-side session persistence.
  */
-export async function createServerSupabaseClient(): Promise<SupabaseClient> {
-  try {
-    // Try to use cookies for session management if available
-    const { cookies } = await import('next/headers');
-    const cookieStore = await cookies();
-
-    // Create client with cookie-based auth
-    const client = createClient(supabaseUrl, supabaseAnonKey, {
-      db: {
-        schema: DB_SCHEMA,
-      },
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options || {});
-          });
-        },
-      },
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
-
-    return client;
-  } catch (error) {
-    // Fallback: create basic client without cookie support
-    console.warn('Could not create Supabase client with cookies, using basic client:', error);
-    return createClient(supabaseUrl, supabaseAnonKey, {
-      db: {
-        schema: DB_SCHEMA,
-      },
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
-  }
+export async function createServerSupabaseClient(): Promise<
+  SupabaseClient<any, any, any, any, any>
+> {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    db: {
+      schema: DB_SCHEMA,
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
 }
 
 /**
@@ -258,8 +230,9 @@ export async function saveFlightLogWithClient(
       const batch = dataPointsData.slice(i, i + batchSize);
       console.log(`Inserting batch ${Math.floor(i / batchSize) + 1} (${batch.length} points)...`);
       
-      // Prepare batch for insertion
-      let batchToInsert = batch.map(dp => ({ ...dp, flight_log_id: newFlightLog.id }));
+      // Prepare batch for insertion. Use a loose type here because we may
+      // need to drop the optional photo_filename property dynamically.
+      let batchToInsert: any[] = batch.map(dp => ({ ...dp, flight_log_id: newFlightLog.id }));
       
       // If photo_filename column doesn't exist, remove it from the insert
       if (!photoFilenameSupported) {
@@ -466,8 +439,8 @@ export async function recalculateAllBatteryStats(
   });
 
   // Fetch sample battery health data points
-  for (const [serial, logIds] of logIdsBySerial.entries()) {
-    if (!statsMap.has(serial)) continue;
+  logIdsBySerial.forEach(async (logIds, serial) => {
+    if (!statsMap.has(serial)) return;
     
     const entry = statsMap.get(serial)!;
     
@@ -496,7 +469,7 @@ export async function recalculateAllBatteryStats(
         });
       }
     }
-  }
+  });
 
   // Calculate aggregates and prepare for database insertion
   const statsToUpsert = Array.from(statsMap.values()).map((entry) => {

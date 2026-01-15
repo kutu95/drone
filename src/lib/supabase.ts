@@ -889,7 +889,7 @@ export async function fetchFlightLogs() {
     .from('flight_logs')
     .select('*')
     .eq('owner_id', user.id)
-    .order('flight_date', { ascending: false, nullsLast: true });
+    .order('flight_date', { ascending: false });
 
   if (error) throw error;
 
@@ -1163,8 +1163,8 @@ export async function fetchBatteryStats(): Promise<BatteryStats[]> {
   });
 
   // Fetch sample battery health data points (first, middle, last of each flight for efficiency)
-  for (const [serial, logIds] of logIdsBySerial.entries()) {
-    if (!statsMap.has(serial)) continue;
+  logIdsBySerial.forEach(async (logIds, serial) => {
+    if (!statsMap.has(serial)) return;
     
     const entry = statsMap.get(serial)!;
     
@@ -1195,7 +1195,7 @@ export async function fetchBatteryStats(): Promise<BatteryStats[]> {
         });
       }
     }
-  }
+  });
 
   // Fetch battery labels
   const { data: labels, error: labelsError } = await supabase
@@ -1345,7 +1345,7 @@ export async function getAdjacentFlightLogIds(currentLogId: string): Promise<{ p
     .from('flight_logs')
     .select('id, flight_date')
     .eq('owner_id', user.id)
-    .order('flight_date', { ascending: false, nullsLast: true });
+    .order('flight_date', { ascending: false });
 
   if (allError || !allLogs) {
     return { previousId: null, nextId: null };
@@ -1432,7 +1432,7 @@ export async function fetchFlightLog(id: string) {
     .from('flight_log_warnings_errors')
     .select('*')
     .eq('flight_log_id', id)
-    .order('timestamp_offset_ms', { ascending: true, nullsLast: true });
+    .order('timestamp_offset_ms', { ascending: true });
 
   if (weError) {
     console.error('Error fetching warnings/errors:', weError);

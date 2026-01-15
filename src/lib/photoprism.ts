@@ -48,8 +48,10 @@ export async function uploadFileToPhotoprism(
 
   try {
     // Use native FormData (available in Node.js 18+)
-    // Create a Blob from the Buffer for better compatibility
-    const fileBlob = new Blob([fileBuffer], { type: mimeType || 'application/octet-stream' });
+    // Convert Node.js Buffer to Uint8Array for Blob compatibility
+    const fileBlob = new Blob([new Uint8Array(fileBuffer)], {
+      type: mimeType || 'application/octet-stream',
+    });
     const form = new FormData();
     
     // Append file with proper filename

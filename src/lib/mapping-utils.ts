@@ -87,8 +87,7 @@ function calculatePhotoSpacing(
   if (spacing < MIN_SPACING) {
     throw new Error(
       `Photo spacing would be ${spacing.toFixed(2)}m, which is too small. ` +
-      `For an 800m x 800m area, try: Altitude 70-80m, Overlap 70-75%. ` +
-      `Current: Altitude ${altitudeM}m would need spacing > ${MIN_SPACING}m.`
+      `For an 800m x 800m area, try: Altitude 70-80m, Overlap 70-75%.`
     );
   }
   

@@ -1308,8 +1308,9 @@ function convertGeoJSONToFlightLog(geojson: any, filename: string): ParseResult 
     // Method 1: Try to get max flyTime from raw data (most accurate for DJI logs)
     let maxFlyTime: number | undefined;
     for (const dp of dataPoints) {
-      if (dp.rawData) {
-        const flyTime = dp.rawData.flyTime || dp.rawData.osd?.flyTime;
+      const raw = dp.rawData as any | undefined;
+      if (raw) {
+        const flyTime = raw.flyTime ?? raw.osd?.flyTime;
         if (typeof flyTime === 'number' && flyTime > 0) {
           if (maxFlyTime === undefined || flyTime > maxFlyTime) {
             maxFlyTime = flyTime;
@@ -1369,18 +1370,24 @@ function convertGeoJSONToFlightLog(geojson: any, filename: string): ParseResult 
       maxSpeedMps: maxSpeedMps !== -Infinity && maxSpeedMps > 0 ? maxSpeedMps : undefined,
       maxDistanceM: maxDistanceM > 0 ? maxDistanceM : undefined,
       totalDistanceM: totalDistanceM > 0 ? totalDistanceM : undefined,
-      homeLocation: homeLat && homeLng ? { lat: homeLat, lng: homeLng } : undefined,
-      startLocation: dataPoints.length > 0 && dataPoints[0].lat && dataPoints[0].lng
-        ? { lat: dataPoints[0].lat, lng: dataPoints[0].lng }
+      homeLocation: typeof homeLat === 'number' && typeof homeLng === 'number'
+        ? { lat: homeLat, lng: homeLng }
         : undefined,
-      endLocation: dataPoints.length > 0 && 
-        dataPoints[dataPoints.length - 1].lat && 
-        dataPoints[dataPoints.length - 1].lng
-        ? { 
-            lat: dataPoints[dataPoints.length - 1].lat, 
-            lng: dataPoints[dataPoints.length - 1].lng 
-          }
-        : undefined,
+      startLocation:
+        dataPoints.length > 0 &&
+        typeof dataPoints[0].lat === 'number' &&
+        typeof dataPoints[0].lng === 'number'
+          ? { lat: dataPoints[0].lat, lng: dataPoints[0].lng }
+          : undefined,
+      endLocation:
+        dataPoints.length > 0 &&
+        typeof dataPoints[dataPoints.length - 1].lat === 'number' &&
+        typeof dataPoints[dataPoints.length - 1].lng === 'number'
+          ? {
+              lat: dataPoints[dataPoints.length - 1].lat!,
+              lng: dataPoints[dataPoints.length - 1].lng!,
+            }
+          : undefined,
       batteryStartPercent: firstBattery !== undefined && firstBattery >= 0 ? firstBattery : undefined,
       batteryEndPercent: lastBattery !== undefined && lastBattery >= 0 ? lastBattery : undefined,
       dataPoints,
