@@ -894,17 +894,22 @@ export async function fetchFlightLogs() {
   if (error) throw error;
 
   // Fetch warnings/errors for all logs
+  // Batch queries to avoid URL length limits (max ~100 IDs per query)
   const logIds = flightLogs.map(log => log.id);
   let warningsErrors: FlightLogWarningErrorDB[] = [];
   
   if (logIds.length > 0) {
-    const { data: weData, error: weError } = await supabase
-      .from('flight_log_warnings_errors')
-      .select('*')
-      .in('flight_log_id', logIds);
-    
-    if (!weError && weData) {
-      warningsErrors = weData as FlightLogWarningErrorDB[];
+    const batchSize = 100; // Limit to avoid URL length issues
+    for (let i = 0; i < logIds.length; i += batchSize) {
+      const batch = logIds.slice(i, i + batchSize);
+      const { data: weData, error: weError } = await supabase
+        .from('flight_log_warnings_errors')
+        .select('*')
+        .in('flight_log_id', batch);
+      
+      if (!weError && weData) {
+        warningsErrors = [...warningsErrors, ...weData];
+      }
     }
   }
   
@@ -933,11 +938,34 @@ export async function fetchFlightLogs() {
         });
       } else if (rpcError) {
         console.warn('RPC function not available, falling back to manual aggregation:', rpcError);
-        // Fallback: if RPC function doesn't exist yet, use the query approach
+        // Fallback: if RPC function doesn't exist yet, use batched queries
+        const batchSize = 100; // Limit to avoid URL length issues
+        for (let i = 0; i < logIds.length; i += batchSize) {
+          const batch = logIds.slice(i, i + batchSize);
+          const { data: photoDataPoints, error: photoError } = await supabase
+            .from('flight_log_data_points')
+            .select('flight_log_id')
+            .in('flight_log_id', batch)
+            .eq('is_photo', true);
+          
+          if (!photoError && photoDataPoints) {
+            photoDataPoints.forEach((dp) => {
+              const logId = dp.flight_log_id;
+              photoCounts.set(logId, (photoCounts.get(logId) || 0) + 1);
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching photo counts:', error);
+      // Fallback on error - use batched queries
+      const batchSize = 100; // Limit to avoid URL length issues
+      for (let i = 0; i < logIds.length; i += batchSize) {
+        const batch = logIds.slice(i, i + batchSize);
         const { data: photoDataPoints, error: photoError } = await supabase
           .from('flight_log_data_points')
           .select('flight_log_id')
-          .in('flight_log_id', logIds)
+          .in('flight_log_id', batch)
           .eq('is_photo', true);
         
         if (!photoError && photoDataPoints) {
@@ -946,21 +974,6 @@ export async function fetchFlightLogs() {
             photoCounts.set(logId, (photoCounts.get(logId) || 0) + 1);
           });
         }
-      }
-    } catch (error) {
-      console.error('Error fetching photo counts:', error);
-      // Fallback on error
-      const { data: photoDataPoints, error: photoError } = await supabase
-        .from('flight_log_data_points')
-        .select('flight_log_id')
-        .in('flight_log_id', logIds)
-        .eq('is_photo', true);
-      
-      if (!photoError && photoDataPoints) {
-        photoDataPoints.forEach((dp) => {
-          const logId = dp.flight_log_id;
-          photoCounts.set(logId, (photoCounts.get(logId) || 0) + 1);
-        });
       }
     }
   }
