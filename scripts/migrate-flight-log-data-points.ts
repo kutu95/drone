@@ -36,17 +36,23 @@ async function migrateAllDataPoints() {
   console.log(`Cloud: ${CLOUD_URL} (public schema)`);
   console.log(`Local: ${LOCAL_URL} (drone schema)\n`);
 
-  // First, get total count from cloud
-  const { count: totalCount, error: countError } = await cloudClient
-    .from('flight_log_data_points')
-    .select('*', { count: 'exact', head: true });
+  // First, try to get total count from cloud
+  // If count fails, we'll just migrate until we get no more data
+  let totalCount: number | null = null;
+  try {
+    const { count, error: countError } = await cloudClient
+      .from('flight_log_data_points')
+      .select('*', { count: 'exact', head: true });
 
-  if (countError) {
-    console.error('❌ Error getting count:', countError);
-    process.exit(1);
+    if (!countError && count !== null) {
+      totalCount = count;
+      console.log(`📊 Total data points in cloud: ${totalCount}\n`);
+    } else {
+      console.log('⚠️  Could not get count, will migrate until no more data\n');
+    }
+  } catch (error) {
+    console.log('⚠️  Could not get count, will migrate until no more data\n');
   }
-
-  console.log(`📊 Total data points in cloud: ${totalCount}\n`);
 
   // Migrate in batches with pagination
   const batchSize = 1000;
@@ -54,7 +60,7 @@ async function migrateAllDataPoints() {
   let totalMigrated = 0;
   let totalInserted = 0;
 
-  while (offset < (totalCount || 0)) {
+  while (totalCount === null || offset < totalCount) {
     console.log(`📥 Fetching batch ${Math.floor(offset / batchSize) + 1} (offset ${offset}...)`);
     
     const { data, error: fetchError } = await cloudClient
