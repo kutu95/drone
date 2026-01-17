@@ -11,7 +11,7 @@ BEGIN
   SELECT 
     dp.flight_log_id,
     COUNT(*)::BIGINT as photo_count
-  FROM flight_log_data_points dp
+  FROM drone.flight_log_data_points dp
   WHERE dp.flight_log_id = ANY(log_ids)
     AND dp.is_photo = true
   GROUP BY dp.flight_log_id;
