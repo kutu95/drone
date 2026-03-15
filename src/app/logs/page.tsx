@@ -521,9 +521,10 @@ export default function FlightLogsPage() {
                           {log.photoCount !== undefined ? log.photoCount : 'N/A'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {Array.isArray((log.metadata as Record<string, unknown>)?.video_filenames)
-                            ? (log.metadata as Record<string, unknown>).video_filenames.length
-                            : '—'}
+                          {(() => {
+                            const v = (log.metadata as Record<string, unknown>)?.video_filenames;
+                            return Array.isArray(v) ? (v as unknown[]).length : '—';
+                          })()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           {(log.errors && log.errors.length > 0) || (log.warnings && log.warnings.length > 0) ? (
