@@ -38,16 +38,17 @@ export default function FlightLogsPage() {
     }
   }, [user, authLoading, router]);
 
-  const loadFlightLogs = async () => {
+  const loadFlightLogs = async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading !== false;
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       const data = await fetchFlightLogs();
       setFlightLogs(data);
     } catch (err) {
       console.error('Failed to load flight logs:', err);
       setError('Failed to load flight logs');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
@@ -459,8 +460,11 @@ export default function FlightLogsPage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Photos
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="Number of video files linked (from bulk regen or link video)">
+                        Videos
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title="Warnings or errors recorded when the flight log was parsed (e.g. low battery, signal)">
+                        Warnings / errors
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Actions
@@ -516,6 +520,11 @@ export default function FlightLogsPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {log.photoCount !== undefined ? log.photoCount : 'N/A'}
                         </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {Array.isArray((log.metadata as Record<string, unknown>)?.video_filenames)
+                            ? (log.metadata as Record<string, unknown>).video_filenames.length
+                            : '—'}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           {(log.errors && log.errors.length > 0) || (log.warnings && log.warnings.length > 0) ? (
                             <div className="flex gap-2">
@@ -543,7 +552,7 @@ export default function FlightLogsPage() {
                               )}
                             </div>
                           ) : (
-                            <span className="text-gray-400">—</span>
+                            <span className="text-gray-400" title="No warnings or errors">OK</span>
                           )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -578,7 +587,7 @@ export default function FlightLogsPage() {
           flightLogs={flightLogs.filter(log => selectedLogIds.has(log.id))}
           onClose={() => setShowBulkPhotoRegenerator(false)}
           onComplete={async () => {
-            await loadFlightLogs();
+            await loadFlightLogs({ showLoading: false });
           }}
         />
       )}

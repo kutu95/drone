@@ -5,7 +5,11 @@ SET search_path TO drone, tryon_schema, public;
 -- Create a function to efficiently count photos per flight log
 -- This uses GROUP BY aggregation which is much faster than multiple COUNT queries
 CREATE OR REPLACE FUNCTION drone.get_photo_counts(log_ids UUID[])
-RETURNS TABLE(flight_log_id UUID, photo_count BIGINT) AS $$
+RETURNS TABLE(flight_log_id UUID, photo_count BIGINT) 
+LANGUAGE plpgsql 
+SECURITY DEFINER
+SET search_path TO drone, tryon_schema, public
+AS $$
 BEGIN
   RETURN QUERY
   SELECT 
@@ -16,7 +20,7 @@ BEGIN
     AND dp.is_photo = true
   GROUP BY dp.flight_log_id;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 -- Grant execute permission to authenticated users
 GRANT EXECUTE ON FUNCTION drone.get_photo_counts(UUID[]) TO authenticated;

@@ -6,12 +6,14 @@ export type { BatteryStats, BatteryLabel, Mission, Waypoint, FlightLog, FlightLo
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Use environment-specific schema: 'drone' for local dev, 'public' for production
+const supabaseSchema = process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
 
-// Create Supabase client with drone schema
-// This allows multiple projects to share the same database using different schemas
+// Create Supabase client with configurable schema
+// Local dev can use 'drone' schema, production uses 'public' schema
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   db: {
-    schema: 'drone',
+    schema: supabaseSchema,
   },
 });
 

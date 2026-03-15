@@ -1,10 +1,26 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Schema configuration for multi-project database setup
-const DB_SCHEMA = 'drone';
+// Schema configuration - use environment variable or default to 'public' for production
+// Local dev can use 'drone' schema, production uses 'public' schema
+const DB_SCHEMA = process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('❌ Missing Supabase environment variables:', {
+    hasUrl: !!supabaseUrl,
+    hasKey: !!supabaseAnonKey,
+    schema: DB_SCHEMA,
+  });
+  throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY');
+}
+
+console.log('🔧 Supabase server client config:', {
+  url: supabaseUrl?.substring(0, 30) + '...',
+  hasKey: !!supabaseAnonKey,
+  schema: DB_SCHEMA,
+});
 
 /**
  * Create a Supabase client authenticated with an access token
@@ -70,21 +86,32 @@ export async function createAuthenticatedSupabaseClient(
 
 /**
  * Create a Supabase client for server-side operations (API routes, server components)
- * We use the configured DB schema (`drone`) and disable client-side session persistence.
+ * We use the configured DB schema and disable client-side session persistence.
  */
 export async function createServerSupabaseClient(): Promise<
   SupabaseClient<any, any, any, any, any>
 > {
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    db: {
-      schema: DB_SCHEMA,
-    },
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
+  try {
+    console.log('🔧 Creating server Supabase client with schema:', DB_SCHEMA);
+    const client = createClient(supabaseUrl, supabaseAnonKey, {
+      db: {
+        schema: DB_SCHEMA,
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+    console.log('✅ Server Supabase client created successfully');
+    return client;
+  } catch (error: any) {
+    console.error('❌ Failed to create server Supabase client:', {
+      message: error?.message,
+      stack: error?.stack,
+    });
+    throw error;
+  }
 }
 
 /**

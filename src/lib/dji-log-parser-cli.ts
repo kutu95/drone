@@ -1351,14 +1351,27 @@ function convertGeoJSONToFlightLog(geojson: any, filename: string): ParseResult 
       durationSeconds = 0;
     }
 
-    // Validate / fallback flight date using filename if necessary
-    const isFlightDateValid = flightDate && !isNaN(flightDate.getTime()) && flightDate.getUTCFullYear() >= 2010 && flightDate.getUTCFullYear() <= 2035;
-    if ((!flightDate || !isFlightDateValid) && filenameDate) {
-      console.warn('Using filename-derived date for flight log due to missing or invalid timestamp date', {
-        previousDate: flightDate?.toISOString(),
-        filenameDate: filenameDate.toISOString(),
-      });
-      flightDate = filenameDate;
+    // Prioritize filename date over timestamp date (filename is more reliable)
+    // Filename format: FlightRecord_YYYY-MM-DD_[HH-MM-SS].txt is the authoritative source
+    if (filenameDate) {
+      const isFilenameDateValid = !isNaN(filenameDate.getTime()) && filenameDate.getUTCFullYear() >= 2010 && filenameDate.getUTCFullYear() <= 2035;
+      if (isFilenameDateValid) {
+        // Always use filename date if available and valid (it's more reliable than timestamps)
+        if (flightDate && flightDate.getTime() !== filenameDate.getTime()) {
+          console.warn('Using filename-derived date instead of timestamp date (filename is more reliable)', {
+            timestampDate: flightDate.toISOString(),
+            filenameDate: filenameDate.toISOString(),
+          });
+        }
+        flightDate = filenameDate;
+      }
+    } else if (flightDate) {
+      // Validate timestamp date if no filename date available
+      const isFlightDateValid = !isNaN(flightDate.getTime()) && flightDate.getUTCFullYear() >= 2010 && flightDate.getUTCFullYear() <= 2035;
+      if (!isFlightDateValid) {
+        console.warn('Invalid timestamp date, but no filename date available:', flightDate.toISOString());
+        flightDate = undefined;
+      }
     }
 
     const flightLog: Partial<FlightLog> = {

@@ -75,6 +75,7 @@ export default function MappingMissionCreator({
     gsd: number;
     footprint: { widthM: number; heightM: number };
     waypointCount: number;
+    photoCount: number;
     flightTime: number;
   } | null>(null);
 
@@ -183,6 +184,42 @@ export default function MappingMissionCreator({
     setDrawingManager(manager);
   }, []);
 
+  // When the rectangle is edited or dragged, update selectedArea so stats recalculate
+  useEffect(() => {
+    if (!selectedRectangle) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const updateAreaFromRectangle = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        const bounds = selectedRectangle.getBounds();
+        if (bounds) {
+          const ne = bounds.getNorthEast();
+          const sw = bounds.getSouthWest();
+          setSelectedArea({
+            north: ne.lat(),
+            south: sw.lat(),
+            east: ne.lng(),
+            west: sw.lng(),
+          });
+        }
+      }, 150);
+    };
+
+    const listener = google.maps.event.addListener(
+      selectedRectangle,
+      'bounds_changed',
+      updateAreaFromRectangle
+    );
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      google.maps.event.removeListener(listener);
+    };
+  }, [selectedRectangle]);
+
   // Calculate stats when parameters change
   useEffect(() => {
     if (selectedArea && altitudeM) {
@@ -205,13 +242,14 @@ export default function MappingMissionCreator({
           // Generate waypoints with error handling
           try {
             const waypoints = generateMappingWaypoints(params);
-            // Use parameter-based estimation for more accuracy (before waypoints are generated)
             const flightTime = estimateMappingFlightTimeFromParams(params);
-            
+            const photoCount = waypoints.filter((w) => w.actionType === 'photo').length;
+
             setEstimatedStats({
               gsd,
               footprint,
               waypointCount: waypoints.length,
+              photoCount,
               flightTime,
             });
           } catch (error) {
@@ -432,14 +470,14 @@ export default function MappingMissionCreator({
           
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Speed (m/s)
+              Speed (km/h)
             </label>
             <input
               type="number"
-              value={speedMps}
-              onChange={(e) => setSpeedMps(Number(e.target.value))}
-              min="1"
-              max="15"
+              value={Number((speedMps * 3.6).toFixed(1))}
+              onChange={(e) => setSpeedMps(Number(e.target.value) / 3.6)}
+              min="3.6"
+              max="54"
               step="0.5"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -510,6 +548,10 @@ export default function MappingMissionCreator({
               <div>
                 <span className="text-gray-600">Waypoints:</span>
                 <span className="ml-2 font-medium">{estimatedStats.waypointCount}</span>
+              </div>
+              <div>
+                <span className="text-gray-600">Photos to take:</span>
+                <span className="ml-2 font-medium">{estimatedStats.photoCount}</span>
               </div>
               <div>
                 <span className="text-gray-600">Estimated Flight Time:</span>

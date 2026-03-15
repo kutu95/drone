@@ -17,36 +17,52 @@ interface SearchParams {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('📸 Photo search API called');
+    console.log('Environment check:', {
+      hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+      hasSupabaseKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      schema: process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public',
+    });
+
     // Authenticate user - try cookie-based auth first, then token-based
     let user;
     let authenticatedClient;
 
     // Try cookie-based auth first (more reliable in Next.js)
     try {
+      console.log('Attempting cookie-based auth...');
       authenticatedClient = await createServerSupabaseClient();
       const { data: { user: userFromSession }, error: authError } = await authenticatedClient.auth.getUser();
       if (!authError && userFromSession) {
         user = userFromSession;
+        console.log('✅ Cookie auth successful, user:', user.id);
+      } else {
+        console.log('⚠️ Cookie auth failed:', authError?.message);
       }
-    } catch (cookieError) {
-      console.error('Cookie auth failed:', cookieError);
+    } catch (cookieError: any) {
+      console.error('❌ Cookie auth exception:', cookieError?.message || cookieError);
     }
 
     // Fallback: try token from Authorization header
     if (!user && request.headers.get('Authorization')?.startsWith('Bearer ')) {
       const token = request.headers.get('Authorization')!.substring(7);
       try {
+        console.log('Attempting token-based auth...');
         authenticatedClient = await createAuthenticatedSupabaseClient(token);
         const { data: { user: userFromToken } } = await authenticatedClient.auth.getUser();
         if (userFromToken) {
           user = userFromToken;
+          console.log('✅ Token auth successful, user:', user.id);
+        } else {
+          console.log('⚠️ Token auth failed: no user returned');
         }
-      } catch (tokenError) {
-        console.error('Token auth failed:', tokenError);
+      } catch (tokenError: any) {
+        console.error('❌ Token auth exception:', tokenError?.message || tokenError);
       }
     }
 
     if (!user || !authenticatedClient) {
+      console.error('❌ Authentication failed - no user or client');
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
@@ -75,15 +91,23 @@ export async function POST(request: NextRequest) {
       flightLogQuery = flightLogQuery.lt('flight_date', endDatePlusOne.toISOString());
     }
 
+    console.log('🔍 Querying flight logs for user:', user.id);
     const { data: flightLogs, error: flightLogError } = await flightLogQuery;
 
     if (flightLogError) {
-      console.error('Error fetching flight logs:', flightLogError);
+      console.error('❌ Error fetching flight logs:', {
+        message: flightLogError.message,
+        details: flightLogError.details,
+        hint: flightLogError.hint,
+        code: flightLogError.code,
+      });
       return NextResponse.json(
         { error: 'Failed to fetch flight logs', details: flightLogError.message },
         { status: 500 }
       );
     }
+
+    console.log(`✅ Found ${flightLogs?.length || 0} flight logs`);
 
     const flightLogIds = (flightLogs || []).map((log: { id: string }) => log.id);
 
@@ -91,44 +115,70 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ photos: [] });
     }
 
-    // Now get photos within bounds from those flight logs
-    const { data: photoDataPoints, error: photoError } = await supabase
-      .from('flight_log_data_points')
-      .select(`
-        id,
-        flight_log_id,
-        lat,
-        lng,
-        altitude_m,
-        timestamp_offset_ms,
-        photo_filename,
-        thumbnail_url,
-        original_file_url,
-        flight_logs!inner(
-          id,
-          flight_date,
-          owner_id
-        )
-      `)
-      .eq('is_photo', true)
-      .not('lat', 'is', null)
-      .not('lng', 'is', null)
-      .gte('lat', bounds.south)
-      .lte('lat', bounds.north)
-      .gte('lng', bounds.west)
-      .lte('lng', bounds.east)
-      .in('flight_log_id', flightLogIds);
+    console.log('🔍 Photo search bounds:', {
+      north: bounds.north,
+      south: bounds.south,
+      east: bounds.east,
+      west: bounds.west,
+      flightLogIds: flightLogIds.length,
+    });
 
-    if (photoError) {
-      console.error('Error searching photos:', photoError);
-      return NextResponse.json(
-        { error: 'Failed to search photos', details: photoError.message },
-        { status: 500 }
-      );
+    // Batch flight log IDs to avoid headers overflow error
+    // Supabase has limits on URL/header size, so we need to query in batches
+    const BATCH_SIZE = 50; // Process 50 flight logs at a time
+    const allPhotoDataPoints: any[] = [];
+
+    for (let i = 0; i < flightLogIds.length; i += BATCH_SIZE) {
+      const batch = flightLogIds.slice(i, i + BATCH_SIZE);
+      console.log(`📦 Querying batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(flightLogIds.length / BATCH_SIZE)} (${batch.length} flight logs)`);
+
+      const { data: photoDataPoints, error: photoError } = await supabase
+        .from('flight_log_data_points')
+        .select(`
+          id,
+          flight_log_id,
+          lat,
+          lng,
+          altitude_m,
+          timestamp_offset_ms,
+          photo_filename,
+          thumbnail_url,
+          original_file_url,
+          heading_deg,
+          gimbal_pitch_deg,
+          flight_logs!inner(
+            id,
+            flight_date,
+            owner_id
+          )
+        `)
+        .eq('is_photo', true)
+        .not('lat', 'is', null)
+        .not('lng', 'is', null)
+        .gte('lat', bounds.south)
+        .lte('lat', bounds.north)
+        .gte('lng', bounds.west)
+        .lte('lng', bounds.east)
+        .in('flight_log_id', batch);
+
+      if (photoError) {
+        console.error(`❌ Error searching photos in batch ${Math.floor(i / BATCH_SIZE) + 1}:`, photoError);
+        return NextResponse.json(
+          { error: 'Failed to search photos', details: photoError.message },
+          { status: 500 }
+        );
+      }
+
+      if (photoDataPoints && photoDataPoints.length > 0) {
+        allPhotoDataPoints.push(...photoDataPoints);
+        console.log(`  ✓ Found ${photoDataPoints.length} photos in this batch`);
+      }
     }
 
+    console.log(`✅ Found ${allPhotoDataPoints.length} total photos in bounds`);
+
     // Transform the data to include flight date for each photo
-    const photos = (photoDataPoints || []).map((dp: any) => {
+    const photos = allPhotoDataPoints.map((dp: any) => {
       // Calculate absolute timestamp from flight date and offset
       let absoluteTimestamp: string | null = null;
       if (dp.flight_logs?.flight_date && dp.timestamp_offset_ms !== null) {
@@ -147,14 +197,21 @@ export async function POST(request: NextRequest) {
         photoFilename: dp.photo_filename,
         thumbnailUrl: dp.thumbnail_url,
         originalFileUrl: dp.original_file_url,
+        headingDeg: dp.heading_deg ?? null,
+        gimbalPitchDeg: dp.gimbal_pitch_deg ?? null,
         flightDate: dp.flight_logs?.flight_date || null,
         absoluteTimestamp,
       };
     });
 
     return NextResponse.json({ photos });
-  } catch (error) {
-    console.error('Error in photos search API:', error);
+  } catch (error: any) {
+    console.error('❌ Fatal error in photos search API:', {
+      message: error?.message,
+      stack: error?.stack,
+      name: error?.name,
+      cause: error?.cause,
+    });
     return NextResponse.json(
       {
         error: 'Failed to search photos',

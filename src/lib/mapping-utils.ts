@@ -350,13 +350,14 @@ export function generateMappingWaypoints(
   const waypoints: Waypoint[] = [];
   let waypointIndex = 0;
 
-  // Starting position (southwest corner for north-south, northwest for east-west)
-  let startLat = flyNorthSouth ? area.south : centerLat;
-  let startLng = flyNorthSouth ? centerLng : area.west;
+  // Start at southwest corner so the grid covers the full area (lines extend from there)
+  const startLat = area.south;
+  const startLng = area.west;
 
-  // Calculate bearing for flight lines
-  const flightBearing = flyNorthSouth ? 0 : 90; // North or East
-  const lineBearing = flyNorthSouth ? 90 : 0; // East or North
+  // Bearing along each flight line (direction of travel): North for N-S, East for E-W
+  const flightBearing = flyNorthSouth ? 0 : 90;
+  // Bearing to move to the next line (perpendicular): East for N-S lines, North for E-W lines
+  const lineBearing = flyNorthSouth ? 90 : 0;
 
   // Generate waypoints
   for (let lineIndex = 0; lineIndex < numLines; lineIndex++) {

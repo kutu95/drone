@@ -1058,7 +1058,15 @@ export default function FlightLogDetailPage() {
               </button>
             </div>
           </div>
-          <FlightLogViewer flightLog={flightLog} />
+          <FlightLogViewer
+            flightLog={flightLog}
+            onFlightLogUpdated={async () => {
+              if (params.id) {
+                const data = await fetchFlightLog(params.id as string);
+                setFlightLog(data);
+              }
+            }}
+          />
           <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-600">
             {flightLog.homeLocation && (
               <div className="flex items-center gap-2">

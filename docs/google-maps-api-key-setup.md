@@ -39,11 +39,13 @@ If you're getting this error, you need to add your localhost URL to the API key'
 
 ### For Production:
 
-When deploying to production (e.g., Vercel), add your production domain:
+When deploying to production (e.g., Vercel), add your production domain. **For this project, add:**
 ```
-https://your-domain.com/*
+https://drone.margies.app/*
 https://*.vercel.app/*
 ```
+
+**Important:** If you see the error `RefererNotAllowedMapError` with the message "Your site URL to be authorized: https://drone.margies.app", you must add `https://drone.margies.app/*` to your API key's HTTP referrer restrictions in Google Cloud Console.
 
 ### Alternative: Remove Restrictions (Not Recommended)
 

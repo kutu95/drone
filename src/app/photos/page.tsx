@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Marker, InfoWindow } from '@react-google-maps/api';
+import { Marker } from '@react-google-maps/api';
 import Link from 'next/link';
 import { GOOGLE_MAPS_LOADER_CONFIG } from '@/lib/google-maps-config';
 
@@ -21,6 +21,8 @@ interface Photo {
   originalFileUrl?: string | null;
   flightDate?: string;
   absoluteTimestamp?: string;
+  headingDeg?: number | null;
+  gimbalPitchDeg?: number | null;
 }
 
 interface PhotoGroupedByMonth {
@@ -36,7 +38,127 @@ export default function PhotoSearchPage() {
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
+  /** When true, show the full-screen lightbox (from list click). When false, only the map InfoWindow can show (from marker click). */
+  const [showLightbox, setShowLightbox] = useState(false);
   const [loading, setLoading] = useState(false);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const closeListenerRef = useRef<google.maps.MapsEventListener | null>(null);
+  const currentPhotoIdRef = useRef<string | null>(null);
+  const isProcessingRef = useRef<boolean>(false);
+  
+  // Initialize InfoWindow once when map loads
+  useEffect(() => {
+    if (map && !infoWindowRef.current) {
+      infoWindowRef.current = new google.maps.InfoWindow({
+        maxWidth: 300,
+        pixelOffset: new google.maps.Size(0, -10),
+      });
+    }
+  }, [map]);
+  
+  // Manually manage InfoWindow to prevent duplicates (only when photo selected from map, not from list)
+  useEffect(() => {
+    if (!map || !infoWindowRef.current) return;
+    
+    if (isProcessingRef.current) return;
+    
+    const infoWindow = infoWindowRef.current;
+    
+    // Clean up previous listener if it exists
+    if (closeListenerRef.current) {
+      google.maps.event.removeListener(closeListenerRef.current);
+      closeListenerRef.current = null;
+    }
+    
+    // Only show InfoWindow when a photo is selected from the map (not when lightbox is open from list)
+    if (selectedPhoto && !showLightbox) {
+      if (currentPhotoIdRef.current === selectedPhoto.id && infoWindow.getMap()) {
+        return;
+      }
+      
+      isProcessingRef.current = true;
+      
+      if (infoWindow.getMap() && currentPhotoIdRef.current !== selectedPhoto.id) {
+        infoWindow.close();
+      }
+      
+      // Create content for InfoWindow
+      const content = document.createElement('div');
+      content.className = 'p-2 max-w-xs';
+      
+      if (selectedPhoto.thumbnailUrl) {
+        const img = document.createElement('img');
+        img.src = selectedPhoto.thumbnailUrl;
+        img.alt = selectedPhoto.photoFilename || 'Photo';
+        img.className = 'mb-2 rounded max-w-full h-auto';
+        img.style.maxHeight = '200px';
+        content.appendChild(img);
+      }
+      
+      const textDiv = document.createElement('div');
+      textDiv.className = 'text-sm';
+      
+      const filenameDiv = document.createElement('div');
+      filenameDiv.className = 'font-semibold mb-1';
+      filenameDiv.textContent = selectedPhoto.photoFilename || 'Photo';
+      textDiv.appendChild(filenameDiv);
+      
+      if (selectedPhoto.absoluteTimestamp) {
+        const dateDiv = document.createElement('div');
+        dateDiv.className = 'text-gray-600 mb-1';
+        dateDiv.textContent = new Date(selectedPhoto.absoluteTimestamp).toLocaleString();
+        textDiv.appendChild(dateDiv);
+      }
+      
+      const gpsDiv = document.createElement('div');
+      gpsDiv.className = 'text-gray-600 text-xs';
+      gpsDiv.textContent = `GPS: ${selectedPhoto.lat.toFixed(6)}, ${selectedPhoto.lng.toFixed(6)}`;
+      textDiv.appendChild(gpsDiv);
+      
+      if (selectedPhoto.altitudeM !== undefined) {
+        const altDiv = document.createElement('div');
+        altDiv.className = 'text-gray-600 text-xs';
+        altDiv.textContent = `Altitude: ${Math.round(selectedPhoto.altitudeM)}m`;
+        textDiv.appendChild(altDiv);
+      }
+      
+      content.appendChild(textDiv);
+      
+      // Update content and position
+      infoWindow.setContent(content);
+      infoWindow.setPosition({ lat: selectedPhoto.lat, lng: selectedPhoto.lng });
+      
+      if (infoWindow.getMap()) {
+        infoWindow.close();
+      }
+      
+      currentPhotoIdRef.current = selectedPhoto.id;
+      infoWindow.open(map);
+      isProcessingRef.current = false;
+      
+      // Add close listener (remove old one first if exists)
+      if (closeListenerRef.current) {
+        google.maps.event.removeListener(closeListenerRef.current);
+      }
+      closeListenerRef.current = google.maps.event.addListener(infoWindow, 'closeclick', () => {
+        currentPhotoIdRef.current = null;
+        setSelectedPhoto(null);
+      });
+      
+      return () => {
+        isProcessingRef.current = false;
+        if (closeListenerRef.current) {
+          google.maps.event.removeListener(closeListenerRef.current);
+          closeListenerRef.current = null;
+        }
+      };
+    } else {
+      if (infoWindow.getMap()) {
+        infoWindow.close();
+      }
+      currentPhotoIdRef.current = null;
+    }
+  }, [selectedPhoto, showLightbox, map]);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
@@ -64,6 +186,8 @@ export default function PhotoSearchPage() {
   
   const [mapCenter, setMapCenter] = useState<google.maps.LatLngLiteral>(() => loadLastMapView().center);
   const [mapZoom, setMapZoom] = useState<number>(() => loadLastMapView().zoom);
+  /** Current map view width in meters; used to show directional marker when < 200m */
+  const [viewWidthMeters, setViewWidthMeters] = useState<number | null>(null);
 
   const { isLoaded } = useJsApiLoader(GOOGLE_MAPS_LOADER_CONFIG);
 
@@ -71,6 +195,34 @@ export default function PhotoSearchPage() {
     if (!authLoading) {
       if (!user) {
         router.push('/login');
+      } else {
+        // Debug: Check if photos exist in database on page load
+        const checkPhotos = async () => {
+          try {
+            const { supabase } = await import('@/lib/supabase');
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+              const { count, error } = await supabase
+                .from('flight_log_data_points')
+                .select('*', { count: 'exact', head: true })
+                .eq('is_photo', true)
+                .not('lat', 'is', null)
+                .not('lng', 'is', null);
+              
+              if (!error && count !== null) {
+                console.log(`📸 Total photos with GPS coordinates in database: ${count}`);
+                if (count === 0) {
+                  console.warn('⚠️ No photos found in database. Make sure flight logs have been uploaded and photos have GPS coordinates.');
+                }
+              } else {
+                console.error('Error checking photos:', error);
+              }
+            }
+          } catch (error) {
+            console.error('Error checking photos on load:', error);
+          }
+        };
+        checkPhotos();
       }
     }
   }, [user, authLoading, router]);
@@ -108,6 +260,28 @@ export default function PhotoSearchPage() {
       clearTimeout(timeoutId);
       google.maps.event.removeListener(listener);
     };
+  }, [map]);
+
+  // Update view width in meters when map bounds change (for directional photo markers when zoomed in)
+  useEffect(() => {
+    if (!map) return;
+    const updateViewWidth = () => {
+      const bounds = map.getBounds();
+      if (!bounds) return;
+      const ne = bounds.getNorthEast();
+      const sw = bounds.getSouthWest();
+      const centerLat = (ne.lat() + sw.lat()) / 2;
+      const lngSpanDeg = ne.lng() - sw.lng();
+      const metersPerDegLng = 111320 * Math.cos((centerLat * Math.PI) / 180);
+      const widthM = lngSpanDeg * metersPerDegLng;
+      setViewWidthMeters(widthM);
+    };
+    updateViewWidth();
+    const listeners = [
+      map.addListener('bounds_changed', updateViewWidth),
+      map.addListener('idle', updateViewWidth),
+    ];
+    return () => listeners.forEach((l) => google.maps.event.removeListener(l));
   }, [map]);
 
   // Group photos by month
@@ -202,6 +376,19 @@ export default function PhotoSearchPage() {
       const ne = bounds.getNorthEast();
       const sw = bounds.getSouthWest();
 
+      const searchParams = {
+        bounds: {
+          north: ne.lat(),
+          south: sw.lat(),
+          east: ne.lng(),
+          west: sw.lng(),
+        },
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      };
+
+      console.log('🔍 Searching photos with params:', searchParams);
+
       const response = await fetch('/api/photos/search', {
         method: 'POST',
         headers: {
@@ -209,25 +396,51 @@ export default function PhotoSearchPage() {
           'Authorization': `Bearer ${session.access_token}`,
         },
         credentials: 'include',
-        body: JSON.stringify({
-          bounds: {
-            north: ne.lat(),
-            south: sw.lat(),
-            east: ne.lng(),
-            west: sw.lng(),
-          },
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
-        }),
+        body: JSON.stringify(searchParams),
       });
 
       if (!response.ok) {
         const error = await response.json();
+        console.error('❌ Search API error:', error);
         throw new Error(error.error || 'Failed to search photos');
       }
 
       const data = await response.json();
-      setPhotos(data.photos || []);
+      console.log(`✅ Search returned ${data.photos?.length || 0} photos`);
+      
+      // Deduplicate photos by ID to prevent duplicate markers/info windows
+      const uniquePhotos = data.photos ? Array.from(
+        new Map(data.photos.map((p: Photo) => [p.id, p])).values()
+      ) : [];
+      
+      if (uniquePhotos.length !== data.photos?.length) {
+        console.warn(`⚠️ Found ${data.photos?.length - uniquePhotos.length} duplicate photos, deduplicated to ${uniquePhotos.length}`);
+      }
+      
+      if (uniquePhotos.length > 0) {
+        console.log('📍 Sample photo locations:', uniquePhotos.slice(0, 3).map((p: Photo) => ({
+          lat: p.lat,
+          lng: p.lng,
+          filename: p.photoFilename,
+        })));
+      } else {
+        console.warn('⚠️ No photos found. Checking if photos exist in database...');
+        // Debug: Check total photo count
+        const { data: totalPhotos, error: countError } = await supabase
+          .from('flight_log_data_points')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_photo', true)
+          .not('lat', 'is', null)
+          .not('lng', 'is', null);
+        
+        if (!countError && totalPhotos !== null) {
+          console.log(`📊 Total photos with GPS in database: ${totalPhotos}`);
+        } else {
+          console.error('Error checking photo count:', countError);
+        }
+      }
+
+      setPhotos(uniquePhotos);
       
       // Note: We intentionally don't change the map view - keep the current visible area
     } catch (error) {
@@ -350,6 +563,14 @@ export default function PhotoSearchPage() {
                 Found {photos.length} photo(s) in visible area
               </div>
             )}
+            
+            {/* Debug info */}
+            {process.env.NODE_ENV === 'development' && map && (
+              <div className="text-xs text-gray-500 mt-2 p-2 bg-gray-50 rounded">
+                <div>Map bounds: N={map.getBounds()?.getNorthEast().lat().toFixed(4)}, S={map.getBounds()?.getSouthWest().lat().toFixed(4)}, E={map.getBounds()?.getNorthEast().lng().toFixed(4)}, W={map.getBounds()?.getSouthWest().lng().toFixed(4)}</div>
+                <div>Center: {mapCenter.lat.toFixed(4)}, {mapCenter.lng.toFixed(4)} | Zoom: {mapZoom}</div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -362,6 +583,13 @@ export default function PhotoSearchPage() {
             onLoad={(mapInstance) => {
               setMap(mapInstance);
             }}
+            onClick={() => {
+              // Close info window when clicking on the map
+              if (infoWindowRef.current) {
+                infoWindowRef.current.close();
+              }
+              setSelectedPhoto(null);
+            }}
             options={{
               mapTypeId: 'satellite',
               mapTypeControl: true,
@@ -370,59 +598,68 @@ export default function PhotoSearchPage() {
             }}
           >
 
-            {/* Photo markers */}
-            {photos.map((photo) => (
+            {/* Photo markers: circle when zoomed out; circle with direction pointer when view < 200m and heading known */}
+            {photos.map((photo) => {
+              const heading =
+                photo.headingDeg != null && typeof photo.headingDeg === 'number'
+                  ? photo.headingDeg
+                  : (photo as { heading_deg?: number }).heading_deg;
+              const useDirectional =
+                viewWidthMeters != null &&
+                viewWidthMeters < 200 &&
+                heading != null &&
+                typeof heading === 'number';
+              // Arrow path: circle + triangle. In SVG path coords Y is down, so (0,-0.6) is "up".
+              // Google Maps Symbol rotation: degrees clockwise from the path's default. Our default
+              // points up (north). Stored heading: 0=north, 90=east (clockwise from north).
+              // If the symbol renders with default = south, use (heading + 180) % 360.
+              const path =
+                useDirectional
+                  ? 'M 0,0 m -0.5,0 a 0.5,0.5 0 1,1 1,0 a 0.5,0.5 0 1,1 -1,0 M 0,-0.6 L -0.15,0.05 L 0.15,0.05 Z'
+                  : google.maps.SymbolPath.CIRCLE;
+              const rotationDeg =
+                useDirectional && typeof heading === 'number'
+                  ? (heading + 180) % 360
+                  : 0;
+              return (
               <Marker
                 key={photo.id}
                 position={{ lat: photo.lat, lng: photo.lng }}
                 icon={{
-                  path: google.maps.SymbolPath.CIRCLE,
-                  scale: 8,
+                  path,
+                  scale: useDirectional ? 10 : 8,
                   fillColor: '#4285F4',
                   fillOpacity: 1,
                   strokeColor: '#ffffff',
                   strokeWeight: 2,
+                  rotation: rotationDeg,
                 }}
-                onClick={() => setSelectedPhoto(photo)}
+                onClick={(e) => {
+                  if (e?.domEvent) {
+                    e.domEvent.stopPropagation();
+                  }
+                  if (selectedPhoto?.id === photo.id) {
+                    if (infoWindowRef.current) {
+                      infoWindowRef.current.close();
+                    }
+                    setSelectedPhoto(null);
+                  } else {
+                    if (infoWindowRef.current) {
+                      infoWindowRef.current.close();
+                    }
+                    setShowLightbox(false); // Map click = show InfoWindow only, not lightbox
+                    setSelectedPhoto(photo);
+                  }
+                }}
+                options={{
+                  optimized: false, // Prevent duplicate rendering issues
+                  clickable: true,
+                }}
               />
-            ))}
+            );
+            })}
 
-            {/* Info window for selected photo */}
-            {selectedPhoto && (
-              <InfoWindow
-                position={{ lat: selectedPhoto.lat, lng: selectedPhoto.lng }}
-                onCloseClick={() => setSelectedPhoto(null)}
-              >
-                <div className="p-2 max-w-xs">
-                  {selectedPhoto.thumbnailUrl && (
-                    <img
-                      src={selectedPhoto.thumbnailUrl}
-                      alt={selectedPhoto.photoFilename || 'Photo'}
-                      className="mb-2 rounded max-w-full h-auto"
-                      style={{ maxHeight: '200px' }}
-                    />
-                  )}
-                  <div className="text-sm">
-                    <div className="font-semibold mb-1">
-                      {selectedPhoto.photoFilename || 'Photo'}
-                    </div>
-                    {selectedPhoto.absoluteTimestamp && (
-                      <div className="text-gray-600 mb-1">
-                        {new Date(selectedPhoto.absoluteTimestamp).toLocaleString()}
-                      </div>
-                    )}
-                    <div className="text-gray-600 text-xs">
-                      GPS: {selectedPhoto.lat.toFixed(6)}, {selectedPhoto.lng.toFixed(6)}
-                    </div>
-                    {selectedPhoto.altitudeM !== undefined && (
-                      <div className="text-gray-600 text-xs">
-                        Altitude: {Math.round(selectedPhoto.altitudeM)}m
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </InfoWindow>
-            )}
+            {/* InfoWindow is now managed manually via useEffect */}
           </GoogleMap>
         </div>
 
@@ -478,8 +715,12 @@ export default function PhotoSearchPage() {
                             key={photo.id}
                             className="cursor-pointer hover:opacity-75 transition-opacity group"
                             onClick={(e) => {
-                              e.stopPropagation(); // Prevent collapsing the month section
+                              e.stopPropagation();
+                              if (infoWindowRef.current?.getMap()) {
+                                infoWindowRef.current.close();
+                              }
                               setSelectedPhoto(photo);
+                              setShowLightbox(true); // List click = open full-screen lightbox
                             }}
                           >
                             {photo.thumbnailUrl ? (
@@ -526,16 +767,22 @@ export default function PhotoSearchPage() {
         )}
       </main>
 
-      {/* Photo Lightbox Modal */}
-      {selectedPhoto && (
+      {/* Photo Lightbox Modal - only when opened from the list, not from map marker */}
+      {selectedPhoto && showLightbox && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4"
-          onClick={() => setSelectedPhoto(null)}
+          onClick={() => {
+            setShowLightbox(false);
+            setSelectedPhoto(null);
+          }}
           tabIndex={-1}
         >
           <div className="relative max-w-7xl max-h-full">
             <button
-              onClick={() => setSelectedPhoto(null)}
+              onClick={() => {
+                setShowLightbox(false);
+                setSelectedPhoto(null);
+              }}
               className="absolute top-2 right-2 text-white bg-black bg-opacity-50 hover:bg-opacity-75 rounded-full p-2 transition-opacity z-10"
               aria-label="Close"
             >
@@ -567,6 +814,7 @@ export default function PhotoSearchPage() {
                 onClick={(e) => e.stopPropagation()}
                 onError={(e) => {
                   console.error('Failed to load photo');
+                  setShowLightbox(false);
                   setSelectedPhoto(null);
                 }}
               />
@@ -574,7 +822,10 @@ export default function PhotoSearchPage() {
               <div className="bg-gray-800 rounded-lg p-8 text-white text-center">
                 <p>No thumbnail available</p>
                 <button
-                  onClick={() => setSelectedPhoto(null)}
+                  onClick={() => {
+                    setShowLightbox(false);
+                    setSelectedPhoto(null);
+                  }}
                   className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
                   Close

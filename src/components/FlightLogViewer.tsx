@@ -7,12 +7,51 @@ import { GOOGLE_MAPS_LOADER_CONFIG } from '@/lib/google-maps-config';
 
 interface FlightLogViewerProps {
   flightLog: FlightLog;
+  /** Called after flight log metadata is updated (e.g. video filename linked) so parent can refetch */
+  onFlightLogUpdated?: () => void;
 }
 
-export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
+const VIDEO_PARENT_FOLDER_IDB = 'bulk-photo-regen';
+const VIDEO_PARENT_FOLDER_STORE = 'settings';
+const VIDEO_PARENT_FOLDER_KEY = 'parent-folder-handle';
+
+/** Load the last-used parent folder (from Bulk Photo Regeneration) so we can open video files directly. */
+async function loadStoredParentFolderHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open(VIDEO_PARENT_FOLDER_IDB, 1);
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => resolve(r.result);
+      r.onupgradeneeded = (e) => {
+        (e.target as IDBOpenDBRequest).result.createObjectStore(VIDEO_PARENT_FOLDER_STORE);
+      };
+    });
+    const handle = await new Promise<FileSystemDirectoryHandle | undefined>((resolve, reject) => {
+      const tx = db.transaction(VIDEO_PARENT_FOLDER_STORE, 'readonly');
+      const req = tx.objectStore(VIDEO_PARENT_FOLDER_STORE).get(VIDEO_PARENT_FOLDER_KEY);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(tx.error);
+    });
+    db.close();
+    return handle ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function formatDateFolder(dateStr?: string): string | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, '0')}_${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: FlightLogViewerProps) {
   const { isLoaded } = useJsApiLoader(GOOGLE_MAPS_LOADER_CONFIG);
 
   const [selectedPhoto, setSelectedPhoto] = useState<number | null>(null);
+  /** When user clicks a red (recording) path segment, this is the segment index for the video InfoWindow */
+  const [selectedRecordingSegmentIndex, setSelectedRecordingSegmentIndex] = useState<number | null>(null);
 
   /**
    * Calculate distance between two coordinates in meters using Haversine formula
@@ -52,6 +91,8 @@ export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
         lat: dp.lat!,
         lng: dp.lng!,
         isPhoto: dp.isPhoto === true,
+        isVideoRecording: dp.isVideoRecording === true,
+        timestampOffsetMs: dp.timestampOffsetMs ?? 0,
       }));
     
     console.log(`Flight log has ${flightLog.dataPoints.length} total data points, ${validCoords.length} with valid GPS coordinates`);
@@ -204,46 +245,71 @@ export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
     }));
   }, [flightLog.dataPoints]);
 
-  // Split path into segments first (detect large jumps in original data)
-  // Then simplify each segment separately for rendering
-  const pathSegments = useMemo(() => {
+  // Split path into segments (by large jumps and by video recording state)
+  // Then simplify each segment separately for rendering; recording segments get timeRange for video matching
+  type PathSegmentWithRecording = {
+    path: Array<{ lat: number; lng: number }>;
+    isRecording: boolean;
+    timeRange?: { startMs: number; endMs: number };
+  };
+  const pathSegments = useMemo((): PathSegmentWithRecording[] => {
     if (allPathCoordinates.length === 0) return [];
     
-    // First, detect large jumps and split into segments using original unsimplified path
     const MAX_JUMP_DISTANCE_M = 1000; // 1km threshold for detecting invalid GPS jumps
-    const rawSegments: Array<Array<{ lat: number; lng: number; isPhoto?: boolean }>> = [];
-    
-    let currentSegment: Array<{ lat: number; lng: number; isPhoto?: boolean }> = [];
-    
+    type Point = { lat: number; lng: number; isPhoto?: boolean; timestampOffsetMs?: number };
+    const rawSegments: Array<{ points: Point[]; isRecording: boolean; timeRange?: { startMs: number; endMs: number } }> = [];
+    let currentPoints: Point[] = [];
+    let currentIsRecording = false;
+
     allPathCoordinates.forEach((coord, index) => {
+      const point: Point = {
+        lat: coord.lat,
+        lng: coord.lng,
+        isPhoto: coord.isPhoto,
+        timestampOffsetMs: coord.timestampOffsetMs,
+      };
+      const prevCoord = index > 0 ? allPathCoordinates[index - 1] : null;
+      const recordingChanged = prevCoord && (coord.isVideoRecording !== prevCoord.isVideoRecording);
+      const distance = prevCoord
+        ? calculateDistance(prevCoord.lat, prevCoord.lng, coord.lat, coord.lng)
+        : 0;
+      const bigJump = distance > MAX_JUMP_DISTANCE_M;
+
       if (index === 0) {
-        // Always start a new segment with the first point
-        currentSegment = [{ lat: coord.lat, lng: coord.lng, isPhoto: coord.isPhoto }];
-      } else {
-        const prevCoord = allPathCoordinates[index - 1];
-        const distance = calculateDistance(prevCoord.lat, prevCoord.lng, coord.lat, coord.lng);
-        
-        if (distance > MAX_JUMP_DISTANCE_M) {
-          // Large jump detected - finish current segment and start new one
-          if (currentSegment.length > 0) {
-            rawSegments.push([...currentSegment]);
-          }
-          currentSegment = [{ lat: coord.lat, lng: coord.lng, isPhoto: coord.isPhoto }];
-          console.log(`Path jump detected at data point ${index}: ${distance.toFixed(0)}m gap. Splitting into new segment.`);
-        } else {
-          // Normal continuation - add to current segment
-          currentSegment.push({ lat: coord.lat, lng: coord.lng, isPhoto: coord.isPhoto });
+        currentPoints = [point];
+        currentIsRecording = coord.isVideoRecording;
+      } else if (bigJump || recordingChanged) {
+        if (currentPoints.length > 0) {
+          const first = currentPoints[0];
+          const last = currentPoints[currentPoints.length - 1];
+          const startMs = first.timestampOffsetMs ?? 0;
+          const endMs = last.timestampOffsetMs ?? 0;
+          rawSegments.push({
+            points: [...currentPoints],
+            isRecording: currentIsRecording,
+            ...(currentIsRecording && { timeRange: { startMs, endMs } }),
+          });
         }
+        if (bigJump) {
+          console.log(`Path jump detected at data point ${index}: ${distance.toFixed(0)}m gap. Splitting into new segment.`);
+        }
+        currentPoints = [point];
+        currentIsRecording = coord.isVideoRecording;
+      } else {
+        currentPoints.push(point);
       }
     });
-    
-    // Don't forget to add the last segment
-    if (currentSegment.length > 0) {
-      rawSegments.push(currentSegment);
-    }
-    
-    if (rawSegments.length > 1) {
-      console.log(`Path split into ${rawSegments.length} segments due to large jumps`);
+
+    if (currentPoints.length > 0) {
+      const first = currentPoints[0];
+      const last = currentPoints[currentPoints.length - 1];
+      const startMs = first.timestampOffsetMs ?? 0;
+      const endMs = last.timestampOffsetMs ?? 0;
+      rawSegments.push({
+        points: currentPoints,
+        isRecording: currentIsRecording,
+        ...(currentIsRecording && { timeRange: { startMs, endMs } }),
+      });
     }
 
     // Filter out segments that create incorrect connections to the home point.
@@ -255,15 +321,14 @@ export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
     const HOME_STATIONARY_THRESHOLD = 20; // Max movement in meters for a "stationary" segment
     
     // First pass: Filter out entirely stationary segments at home
-    const afterStationaryFilter = rawSegments.filter(segment => {
+    const afterStationaryFilter = rawSegments.filter(seg => {
+      const segment = seg.points;
       if (segment.length === 0) return false;
       if (segment.length === 1) return true; // Single point segments are OK
       
-      // Check if all points in segment are near home
       const allNearHome = segment.every(coord => isNearHomePoint(coord.lat, coord.lng));
       
       if (allNearHome) {
-        // Calculate total movement in this segment
         let totalMovement = 0;
         for (let i = 1; i < segment.length; i++) {
           totalMovement += calculateDistance(
@@ -271,28 +336,25 @@ export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
             segment[i].lat, segment[i].lng
           );
         }
-        
-        // Filter out segments that are just stationary at home (very small movement)
         if (totalMovement < HOME_STATIONARY_THRESHOLD) {
           console.log(`Filtering out stationary segment at home (${segment.length} points, ${totalMovement.toFixed(1)}m movement)`);
           return false;
         }
       }
-      
       return true;
     });
     
     // Second pass: Filter out segments that incorrectly connect to home
-    // Track which segments connect to home and their positions in the sequence
-    const segmentsWithHomeInfo = afterStationaryFilter.map((segment, index) => {
-      if (segment.length === 0) return { segment, index, startsAtHome: false, endsAtHome: false };
+    const segmentsWithHomeInfo = afterStationaryFilter.map((seg, index) => {
+      const segment = seg.points;
+      if (segment.length === 0) return { segment, index, startsAtHome: false, endsAtHome: false, isRecording: seg.isRecording, timeRange: seg.timeRange };
       
       const firstPoint = segment[0];
       const lastPoint = segment[segment.length - 1];
       const startsAtHome = isNearHomePoint(firstPoint.lat, firstPoint.lng);
       const endsAtHome = isNearHomePoint(lastPoint.lat, lastPoint.lng);
       
-      return { segment, index, startsAtHome, endsAtHome };
+      return { segment, index, startsAtHome, endsAtHome, isRecording: seg.isRecording, timeRange: seg.timeRange };
     });
     
     // Find all segments that end at home
@@ -313,146 +375,132 @@ export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
     // Log details about segments ending at home for debugging
     segmentsEndingAtHome.forEach(segIndex => {
       const seg = afterStationaryFilter[segIndex];
-      if (seg && seg.length > 0) {
-        const start = seg[0];
-        const end = seg[seg.length - 1];
+      if (seg && seg.points.length > 0) {
+        const start = seg.points[0];
+        const end = seg.points[seg.points.length - 1];
         const distance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
-        console.log(`  Segment ${segIndex + 1}: ${seg.length} points, ${distance.toFixed(0)}m straight distance, is last: ${segIndex === validSegmentEndingAtHomeIndex}`);
+        console.log(`  Segment ${segIndex + 1}: ${seg.points.length} points, ${distance.toFixed(0)}m straight distance, is last: ${segIndex === validSegmentEndingAtHomeIndex}`);
       }
     });
     
     // Filter segments
     const filteredSegments = segmentsWithHomeInfo.filter(({ segment, index, startsAtHome, endsAtHome }) => {
       if (segment.length === 0) return false;
-      
-      // If segment doesn't connect to home, keep it
-      if (!startsAtHome && !endsAtHome) {
-        return true;
-      }
-      
-      // If segment starts at home, only keep if it's the first segment (takeoff)
+      if (!startsAtHome && !endsAtHome) return true;
       if (startsAtHome && !endsAtHome) {
-        if (index === 0) {
-          return true; // Legitimate takeoff
-        } else {
-          console.log(`Filtering out segment ${index + 1}: starts at home but is not the first segment (erroneous GPS jump)`);
-          return false;
-        }
+        if (index === 0) return true;
+        console.log(`Filtering out segment ${index + 1}: starts at home but is not the first segment (erroneous GPS jump)`);
+        return false;
       }
-      
-      // If segment ends at home, filter aggressively:
-      // If multiple segments end at home, only keep the last one (by index) - this is the actual landing
-      // All others are erroneous forks/jumps
       if (endsAtHome && !startsAtHome) {
-        // Simple rule: if multiple segments end at home, only keep the one with the highest index
         if (segmentsEndingAtHome.length > 1) {
           const isLastSegmentEndingAtHome = index === validSegmentEndingAtHomeIndex;
           if (!isLastSegmentEndingAtHome) {
-            console.log(`Filtering out segment ${index + 1}: ends at home but is not the last segment ending at home (${segmentsEndingAtHome.length} segments end at home - keeping only index ${validSegmentEndingAtHomeIndex})`);
+            console.log(`Filtering out segment ${index + 1}: ends at home but is not the last segment ending at home`);
             return false;
           }
         }
-        
-        // Keep this segment - it's either the only segment ending at home, or the last one
         return true;
       }
-      
-      // If segment both starts and ends at home, it's likely erroneous unless it's the only segment
       if (startsAtHome && endsAtHome) {
-        if (afterStationaryFilter.length === 1) {
-          return true; // Single segment flight (stays at home the whole time - unusual but valid)
-        } else {
-          console.log(`Filtering out segment ${index + 1}: both starts and ends at home (erroneous loop)`);
-          return false;
-        }
+        if (afterStationaryFilter.length === 1) return true;
+        console.log(`Filtering out segment ${index + 1}: both starts and ends at home (erroneous loop)`);
+        return false;
       }
-      
       return true;
-    }).map(({ segment }) => segment);
-    
-    const segmentsToSimplify = filteredSegments;
-    
-    // Now simplify each segment separately for rendering
-    const simplifiedSegments: Array<Array<{ lat: number; lng: number }>> = [];
-    
-    // Create a set of photo locations for quick lookup
+    }).map(({ segment, isRecording, timeRange }) => ({ points: segment, isRecording, timeRange }));
+
+    // Simplify each segment and keep isRecording + timeRange
+    const result: PathSegmentWithRecording[] = [];
     const photoCoords = new Set<string>();
     photoLocations.forEach(photo => {
       photoCoords.add(`${Math.round(photo.lat * 1000000)},${Math.round(photo.lng * 1000000)}`);
     });
-    
-    segmentsToSimplify.forEach((segment, segIndex) => {
+
+    filteredSegments.forEach(({ points: segment, isRecording, timeRange }, segIndex) => {
+      let simplified: Array<{ lat: number; lng: number }>;
       if (segment.length < 200) {
-        // For short segments, no need to simplify
-        simplifiedSegments.push(segment.map(c => ({ lat: c.lat, lng: c.lng })));
+        simplified = segment.map(c => ({ lat: c.lat, lng: c.lng }));
       } else {
-        // Calculate sample rate to target ~500 points max per segment
         const targetMaxPoints = 500;
         const sampleRate = Math.ceil(segment.length / targetMaxPoints);
-        
-        const simplified: Array<{ lat: number; lng: number }> = [];
-        
+        simplified = [];
         segment.forEach((coord, index) => {
           const coordKey = `${Math.round(coord.lat * 1000000)},${Math.round(coord.lng * 1000000)}`;
           const isPhotoLocation = photoCoords.has(coordKey) || coord.isPhoto === true;
-          
-          // Always include first point of segment
           if (index === 0) {
             simplified.push({ lat: coord.lat, lng: coord.lng });
             return;
           }
-          
-          // Always include last point of segment
           if (index === segment.length - 1) {
             const lastAdded = simplified[simplified.length - 1];
-            if (!lastAdded || 
-                Math.abs(lastAdded.lat - coord.lat) > 0.000001 || 
-                Math.abs(lastAdded.lng - coord.lng) > 0.000001) {
+            if (!lastAdded || Math.abs(lastAdded.lat - coord.lat) > 0.000001 || Math.abs(lastAdded.lng - coord.lng) > 0.000001) {
               simplified.push({ lat: coord.lat, lng: coord.lng });
             }
             return;
           }
-          
-          // Always include photo locations
           if (isPhotoLocation) {
             const lastPoint = simplified[simplified.length - 1];
-            if (!lastPoint || 
-                Math.abs(lastPoint.lat - coord.lat) > 0.000001 || 
-                Math.abs(lastPoint.lng - coord.lng) > 0.000001) {
+            if (!lastPoint || Math.abs(lastPoint.lat - coord.lat) > 0.000001 || Math.abs(lastPoint.lng - coord.lng) > 0.000001) {
               simplified.push({ lat: coord.lat, lng: coord.lng });
             }
             return;
           }
-          
-          // Sample regular points
-          if (index % sampleRate === 0) {
-            simplified.push({ lat: coord.lat, lng: coord.lng });
-          }
+          if (index % sampleRate === 0) simplified.push({ lat: coord.lat, lng: coord.lng });
         });
-        
-        simplifiedSegments.push(simplified);
         console.log(`Segment ${segIndex + 1}: Simplified from ${segment.length} to ${simplified.length} points`);
       }
+      result.push({ path: simplified, isRecording, ...(timeRange && { timeRange }) });
     });
-    
+
     const totalOriginal = allPathCoordinates.length;
-    const totalSimplified = simplifiedSegments.reduce((sum, seg) => sum + seg.length, 0);
-    console.log(`Total: Simplified path from ${totalOriginal} to ${totalSimplified} points across ${simplifiedSegments.length} segment(s)`);
-    
-    return simplifiedSegments;
+    const totalSimplified = result.reduce((sum, seg) => sum + seg.path.length, 0);
+    console.log(`Total: Simplified path from ${totalOriginal} to ${totalSimplified} points across ${result.length} segment(s)`);
+    return result;
   }, [allPathCoordinates, photoLocations]);
 
-  // For backward compatibility, create a single path if only one segment
+  // Recording intervals from flight log: contiguous runs where isVideoRecording is true (order = video 1, 2, ...)
+  const recordingIntervals = useMemo(() => {
+    if (!flightLog.dataPoints?.length) return [];
+    const intervals: Array<{ startMs: number; endMs: number }> = [];
+    let runStart: number | null = null;
+    flightLog.dataPoints.forEach((dp) => {
+      const t = dp.timestampOffsetMs ?? 0;
+      if (dp.isVideoRecording) {
+        if (runStart === null) runStart = t;
+      } else {
+        if (runStart !== null) {
+          intervals.push({ startMs: runStart, endMs: t });
+          runStart = null;
+        }
+      }
+    });
+    if (runStart !== null) {
+      const lastT = flightLog.dataPoints[flightLog.dataPoints.length - 1]?.timestampOffsetMs ?? runStart;
+      intervals.push({ startMs: runStart, endMs: lastT });
+    }
+    return intervals;
+  }, [flightLog.dataPoints]);
+
+  // For backward compatibility, create a single path if only one segment (for bounds etc.)
   const pathCoordinates = useMemo(() => {
     if (pathSegments.length === 0) return [];
-    if (pathSegments.length === 1) return pathSegments[0];
-    // If multiple segments, return the longest one (usually the main flight path)
-    // The segments will be rendered separately
-    return pathSegments.reduce((longest, segment) => 
-      segment.length > longest.length ? segment : longest
-    , pathSegments[0]);
+    if (pathSegments.length === 1) return pathSegments[0].path;
+    return pathSegments.reduce((longest, seg) => 
+      seg.path.length > longest.length ? seg.path : longest
+    , pathSegments[0].path);
   }, [pathSegments]);
 
+  /** Match a recording segment's time range to the video file for that period (by overlapping recording interval). */
+  const getVideoForSegment = (timeRange: { startMs: number; endMs: number }, videoFilenames: string[]): string | null => {
+    if (videoFilenames.length === 0) return null;
+    const segmentMid = (timeRange.startMs + timeRange.endMs) / 2;
+    const idx = recordingIntervals.findIndex(
+      (iv) => timeRange.startMs < iv.endMs && timeRange.endMs > iv.startMs
+    );
+    if (idx === -1) return null;
+    return videoFilenames[idx] ?? null;
+  };
 
   // Calculate bounds using ALL coordinates (not simplified) to ensure we capture everything
   const bounds = useMemo(() => {
@@ -594,20 +642,163 @@ export default function FlightLogViewer({ flightLog }: FlightLogViewerProps) {
           />
         )}
 
-        {/* Flight path polylines - render each segment separately to avoid connecting large jumps */}
-        {pathSegments.map((segment, segmentIndex) => 
-          segment.length > 1 ? (
+        {/* Flight path polylines - red when recording video, blue otherwise; red segments are clickable for video link */}
+        {pathSegments.map((seg, segmentIndex) =>
+          seg.path.length > 1 ? (
             <Polyline
               key={`path-segment-${segmentIndex}`}
-              path={segment}
+              path={seg.path}
               options={{
-                strokeColor: '#3B82F6',
+                strokeColor: seg.isRecording ? '#DC2626' : '#3B82F6',
                 strokeOpacity: 0.8,
                 strokeWeight: 3,
+                clickable: seg.isRecording,
+                cursor: seg.isRecording ? 'pointer' : undefined,
               }}
+              onClick={seg.isRecording ? () => setSelectedRecordingSegmentIndex(segmentIndex) : undefined}
             />
           ) : null
         )}
+        {/* InfoWindow for video when user clicks a red (recording) segment — one video for this segment when matched by time */}
+        {selectedRecordingSegmentIndex != null && pathSegments[selectedRecordingSegmentIndex]?.isRecording && (() => {
+          const seg = pathSegments[selectedRecordingSegmentIndex];
+          const mid = Math.floor(seg.path.length / 2);
+          const pos = seg.path[mid] ?? seg.path[0];
+          const rawList = flightLog.metadata?.video_filenames;
+          const videoFilenames: string[] = Array.isArray(rawList)
+            ? rawList.filter((f): f is string => typeof f === 'string')
+            : (flightLog.metadata?.video_filename || flightLog.metadata?.videoFilename)
+              ? [String(flightLog.metadata.video_filename || flightLog.metadata.videoFilename)]
+              : [];
+          const photoFolderPath = (flightLog.metadata?.photo_folder_path as string) || formatDateFolder(flightLog.flightDate);
+          const segmentVideo =
+            seg.timeRange && videoFilenames.length > 0
+              ? getVideoForSegment(seg.timeRange, videoFilenames)
+              : videoFilenames.length === 1
+                ? videoFilenames[0]
+                : null;
+          const handleOpenVideo = async (filename: string) => {
+            try {
+              let dirHandle: FileSystemDirectoryHandle | null = await loadStoredParentFolderHandle();
+              if (dirHandle && 'requestPermission' in dirHandle) {
+                const perm = await (dirHandle as FileSystemDirectoryHandle).requestPermission({ mode: 'read' });
+                if (perm !== 'granted') dirHandle = null;
+              }
+              if (!dirHandle) {
+                // @ts-expect-error File System Access API
+                dirHandle = await window.showDirectoryPicker();
+              }
+              const dateFolder = photoFolderPath
+                ? await dirHandle.getDirectoryHandle(photoFolderPath)
+                : dirHandle;
+              const fileHandle = await dateFolder.getFileHandle(filename);
+              const file = await fileHandle.getFile();
+              const url = URL.createObjectURL(file);
+              window.open(url, '_blank');
+            } catch (e: unknown) {
+              if ((e as { name?: string })?.name !== 'AbortError') {
+                console.error('Open video failed:', e);
+                alert('Could not open video. Select the parent folder that contains the date folder (e.g. ' + (photoFolderPath || 'YYYY_MM_DD') + ').');
+              }
+            }
+          };
+          const handleAddVideoFiles = async () => {
+            try {
+              // @ts-expect-error File System Access API
+              const handles = await window.showOpenFilePicker({
+                types: [{ accept: { 'video/*': ['.mp4', '.mov', '.avi', '.mkv'] } }],
+                multiple: true,
+              });
+              const names = await Promise.all(handles.map(async (h) => (await h.getFile()).name));
+              const combined = [...videoFilenames, ...names];
+              const deduped = Array.from(new Set(combined));
+              const { supabase } = await import('@/lib/supabase');
+              await supabase
+                .from('flight_logs')
+                .update({
+                  metadata: {
+                    ...flightLog.metadata,
+                    video_filenames: deduped,
+                  },
+                })
+                .eq('id', flightLog.id);
+              onFlightLogUpdated?.();
+              setSelectedRecordingSegmentIndex(null);
+            } catch (e: unknown) {
+              if ((e as { name?: string })?.name !== 'AbortError') {
+                console.error('Add video failed:', e);
+                alert('Could not save video links.');
+              }
+            }
+          };
+          return (
+            <InfoWindow
+              position={pos}
+              onCloseClick={() => setSelectedRecordingSegmentIndex(null)}
+            >
+              <div className="p-2 min-w-[200px] max-w-[320px]">
+                <p className="text-sm font-medium text-gray-900 mb-2">Video recorded during this segment</p>
+                {segmentVideo ? (
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenVideo(segmentVideo)}
+                      className="text-blue-600 underline text-sm hover:no-underline text-left truncate block w-full"
+                      title={segmentVideo}
+                    >
+                      Open {segmentVideo}
+                    </button>
+                    {videoFilenames.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleAddVideoFiles}
+                        className="text-xs text-gray-500 underline hover:no-underline block"
+                      >
+                        Add more video files
+                      </button>
+                    )}
+                  </div>
+                ) : videoFilenames.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-500 mb-1.5">No video matched this segment by time. All videos:</p>
+                    <ul className="list-none space-y-0.5">
+                      {videoFilenames.map((name, i) => (
+                        <li key={i}>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenVideo(name)}
+                            className="text-blue-600 underline text-sm hover:no-underline text-left truncate block w-full"
+                            title={name}
+                          >
+                            Open {name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={handleAddVideoFiles}
+                      className="text-xs text-gray-500 underline hover:no-underline mt-1"
+                    >
+                      Add more video files
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-500 mb-2">No video files linked. Videos are stored in the same folder as this flight&apos;s photos.</p>
+                    <button
+                      type="button"
+                      onClick={handleAddVideoFiles}
+                      className="text-sm text-blue-600 underline hover:no-underline"
+                    >
+                      Link video files (store filenames)
+                    </button>
+                  </>
+                )}
+              </div>
+            </InfoWindow>
+          );
+        })()}
 
         {/* Photo markers - show camera icon for all photos */}
         {(() => {

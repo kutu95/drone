@@ -4,6 +4,58 @@ import { useState, useRef, useEffect } from 'react';
 import { FlightLog } from '@/lib/types';
 import exifr from 'exifr';
 
+const BULK_REGEN_IDB_NAME = 'bulk-photo-regen';
+const BULK_REGEN_IDB_STORE = 'settings';
+const BULK_REGEN_FOLDER_KEY = 'parent-folder-handle';
+
+/** Persist the last selected parent folder handle in IndexedDB (supported in Chrome). */
+async function saveParentFolderHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  try {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open(BULK_REGEN_IDB_NAME, 1);
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => resolve(r.result);
+      r.onupgradeneeded = (e) => {
+        (e.target as IDBOpenDBRequest).result.createObjectStore(BULK_REGEN_IDB_STORE);
+      };
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(BULK_REGEN_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(BULK_REGEN_IDB_STORE);
+      store.put(handle, BULK_REGEN_FOLDER_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (e) {
+    console.warn('Could not save parent folder handle:', e);
+  }
+}
+
+/** Restore the last used parent folder handle from IndexedDB, if any. */
+async function loadParentFolderHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open(BULK_REGEN_IDB_NAME, 1);
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => resolve(r.result);
+      r.onupgradeneeded = (e) => {
+        (e.target as IDBOpenDBRequest).result.createObjectStore(BULK_REGEN_IDB_STORE);
+      };
+    });
+    const handle = await new Promise<FileSystemDirectoryHandle | undefined>((resolve, reject) => {
+      const tx = db.transaction(BULK_REGEN_IDB_STORE, 'readonly');
+      const req = tx.objectStore(BULK_REGEN_IDB_STORE).get(BULK_REGEN_FOLDER_KEY);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(tx.error);
+    });
+    db.close();
+    return handle ?? null;
+  } catch {
+    return null;
+  }
+}
+
 interface BulkPhotoRegeneratorProps {
   flightLogs: FlightLog[];
   onClose: () => void;
@@ -16,6 +68,12 @@ interface FlightProcessingStatus {
   photosFound: number;
   photosMatched: number;
   photosCreated: number;
+  /** Number of video filenames linked (video-only mode or after full regen) */
+  videosLinked?: number;
+  /** When status is 'processing', number of photos processed so far in this flight */
+  photosProcessed?: number;
+  /** When status is 'processing', total photos to process in this flight */
+  totalPhotosInFlight?: number;
   error?: string;
   folderFound: boolean;
 }
@@ -23,25 +81,57 @@ interface FlightProcessingStatus {
 export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }: BulkPhotoRegeneratorProps) {
   const [parentFolder, setParentFolder] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [videoLinksOnly, setVideoLinksOnly] = useState(false);
   const [statuses, setStatuses] = useState<Map<string, FlightProcessingStatus>>(new Map());
   const [currentFlightIndex, setCurrentFlightIndex] = useState(0);
   const parentFolderHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
+  const cancelRequestedRef = useRef(false);
 
-  // Initialize statuses
+  // Initialize or sync statuses when flightLogs changes. Preserve existing stats after
+  // processing so that when the parent refetches (onComplete) we don't reset to pending.
   useEffect(() => {
-    const initialStatuses = new Map<string, FlightProcessingStatus>();
-    flightLogs.forEach(log => {
-      initialStatuses.set(log.id, {
-        flightLog: log,
-        status: 'pending',
-        photosFound: 0,
-        photosMatched: 0,
-        photosCreated: 0,
-        folderFound: false,
-      });
+    setStatuses((prev) => {
+      const next = new Map<string, FlightProcessingStatus>();
+      for (const log of flightLogs) {
+        const existing = prev.get(log.id);
+        if (existing) {
+          // Keep existing status and counts; only refresh the flightLog reference
+          next.set(log.id, { ...existing, flightLog: log });
+        } else {
+          next.set(log.id, {
+            flightLog: log,
+            status: 'pending',
+            photosFound: 0,
+            photosMatched: 0,
+            photosCreated: 0,
+            folderFound: false,
+          });
+        }
+      }
+      return next;
     });
-    setStatuses(initialStatuses);
   }, [flightLogs]);
+
+  // Restore last used parent folder from IndexedDB (Chrome preserves FileSystemHandle)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const handle = await loadParentFolderHandle();
+      if (cancelled || !handle) return;
+      try {
+        // Permission may have been revoked; re-request read access
+        const perm = 'requestPermission' in handle
+          ? await (handle as FileSystemDirectoryHandle).requestPermission({ mode: 'read' })
+          : 'granted';
+        if (cancelled || perm !== 'granted') return;
+        parentFolderHandleRef.current = handle;
+        setParentFolder(handle.name);
+      } catch {
+        // Handle invalid or permission denied; user will pick again
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Format flight date as YYYY_MM_DD
   const formatFlightDateForFolder = (flightDate?: string): string | null => {
@@ -218,6 +308,7 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
       const dirHandle = await window.showDirectoryPicker();
       parentFolderHandleRef.current = dirHandle;
       setParentFolder(dirHandle.name);
+      await saveParentFolderHandle(dirHandle);
     } catch (error: any) {
       if (error.name !== 'AbortError') {
         console.error('Error selecting parent folder:', error);
@@ -226,8 +317,8 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
     }
   };
 
-  // Process a single flight
-  const processFlight = async (flightLog: FlightLog, folderHandle: FileSystemDirectoryHandle) => {
+  // Process a single flight (optionally video links only — no photo delete/regeneration)
+  const processFlight = async (flightLog: FlightLog, folderHandle: FileSystemDirectoryHandle, videoOnly: boolean = false) => {
     const folderName = formatFlightDateForFolder(flightLog.flightDate);
     
     if (!folderName) {
@@ -274,6 +365,35 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
           });
         }
         return newStatuses;
+      });
+      return;
+    }
+
+    // Video-only mode: scan for videos, update metadata, skip all photo processing
+    if (videoOnly) {
+      const videoFilenames: string[] = [];
+      const videoExtensions = /\.(mp4|mov|avi|mkv|MP4|MOV|AVI|MKV)$/i;
+      for await (const [name, entry] of dateFolderHandle as any) {
+        if (entry.kind === 'file' && !name.startsWith('._') && videoExtensions.test(name)) {
+          videoFilenames.push(name);
+        }
+      }
+      const { supabase } = await import('@/lib/supabase');
+      await supabase
+        .from('flight_logs')
+        .update({
+          metadata: {
+            ...flightLog.metadata,
+            photo_folder_path: folderName,
+            ...(videoFilenames.length > 0 && { video_filenames: videoFilenames }),
+          },
+        })
+        .eq('id', flightLog.id);
+      setStatuses(prev => {
+        const next = new Map(prev);
+        const s = next.get(flightLog.id);
+        if (s) next.set(flightLog.id, { ...s, status: 'completed', videosLinked: videoFilenames.length, folderFound: true });
+        return next;
       });
       return;
     }
@@ -329,22 +449,27 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
       return;
     }
 
-    // Read all image files from the date folder
+    // Read all image files and detect all video files from the date folder
     const photoFiles: Array<{ file: File; filename: string }> = [];
-    
-    // FileSystemDirectoryHandle is an async iterable, iterate directly
+    const videoFilenames: string[] = [];
+    const videoExtensions = /\.(mp4|mov|avi|mkv|MP4|MOV|AVI|MKV)$/i;
+
     for await (const [name, entry] of dateFolderHandle as any) {
       if (entry.kind === 'file') {
+        if (name.startsWith('._')) continue;
+
         const file = await entry.getFile();
         const filename = file.name.toLowerCase();
-        
-        if (filename.endsWith('.dng') || filename.endsWith('.jpg') || 
-            filename.endsWith('.jpeg') || filename.endsWith('.cr2') || 
+
+        if (filename.endsWith('.dng') || filename.endsWith('.jpg') ||
+            filename.endsWith('.jpeg') || filename.endsWith('.cr2') ||
             filename.endsWith('.nef') || filename.endsWith('.arw')) {
           photoFiles.push({
             file,
             filename: name,
           });
+        } else if (videoExtensions.test(name)) {
+          videoFilenames.push(name);
         }
       }
     }
@@ -485,8 +610,19 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
 
     let photosCreated = 0;
     const insertErrors: Array<{ filename: string; error: string }> = [];
+    const totalInFlight = matchedPhotos.length;
 
-    for (const photo of matchedPhotos) {
+    // Show progress: total photos to process for this flight
+    setStatuses((prev) => {
+      const next = new Map(prev);
+      const s = next.get(flightLog.id);
+      if (s) next.set(flightLog.id, { ...s, totalPhotosInFlight: totalInFlight, photosProcessed: 0 });
+      return next;
+    });
+
+    for (let i = 0; i < matchedPhotos.length; i++) {
+      const photo = matchedPhotos[i];
+
       try {
         // Generate thumbnail
         let thumbnailUrl: string | null = null;
@@ -546,6 +682,14 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
         console.error(`Exception creating photo record for ${photo.filename}:`, error);
         insertErrors.push({ filename: photo.filename, error: errorMsg });
       }
+
+      // Update progress: N of M photos processed for this flight
+      setStatuses((prev) => {
+        const next = new Map(prev);
+        const s = next.get(flightLog.id);
+        if (s) next.set(flightLog.id, { ...s, photosProcessed: i + 1 });
+        return next;
+      });
     }
 
     // Log summary of errors
@@ -571,14 +715,15 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
       }
     }
 
-    // Update folder path in flight log metadata
-    if (photosCreated > 0) {
+    // Update folder path and all video filenames in flight log metadata (videos live in same date folder as photos)
+    if (photosCreated > 0 || videoFilenames.length > 0) {
       await supabase
         .from('flight_logs')
         .update({
           metadata: {
             ...flightLog.metadata,
             photo_folder_path: folderName,
+            ...(videoFilenames.length > 0 && { video_filenames: videoFilenames }),
           },
         })
         .eq('id', flightLog.id);
@@ -605,6 +750,7 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
           ...status,
           status: photosCreated > 0 ? 'completed' : 'error',
           photosCreated,
+          videosLinked: videoFilenames.length,
           error: errorMsg,
         });
       }
@@ -619,21 +765,26 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
       return;
     }
 
+    cancelRequestedRef.current = false;
     setProcessing(true);
     setCurrentFlightIndex(0);
 
-    // First, reload all flight logs to get full data points
     const { supabase } = await import('@/lib/supabase');
     const { fetchFlightLog } = await import('@/lib/supabase');
 
     for (let i = 0; i < flightLogs.length; i++) {
+      if (cancelRequestedRef.current) break;
+
       const flightLog = flightLogs[i];
       setCurrentFlightIndex(i + 1);
 
       try {
-        // Fetch full flight log with data points
-        const fullFlightLog = await fetchFlightLog(flightLog.id);
-        await processFlight(fullFlightLog, parentFolderHandleRef.current!);
+        if (videoLinksOnly) {
+          await processFlight(flightLog, parentFolderHandleRef.current!, true);
+        } else {
+          const fullFlightLog = await fetchFlightLog(flightLog.id);
+          await processFlight(fullFlightLog, parentFolderHandleRef.current!, false);
+        }
       } catch (error) {
         console.error(`Error processing flight ${flightLog.id}:`, error);
         setStatuses(prev => {
@@ -655,11 +806,16 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
     await onComplete();
   };
 
+  const handleCancelProcessing = () => {
+    cancelRequestedRef.current = true;
+  };
+
   const statusArray = Array.from(statuses.values());
   const completedCount = statusArray.filter(s => s.status === 'completed').length;
   const errorCount = statusArray.filter(s => s.status === 'error').length;
   const skippedCount = statusArray.filter(s => s.status === 'skipped').length;
   const totalPhotosCreated = statusArray.reduce((sum, s) => sum + s.photosCreated, 0);
+  const totalVideosLinked = statusArray.reduce((sum, s) => sum + (s.videosLinked ?? 0), 0);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -679,6 +835,18 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
             Select a parent folder containing date-based subfolders (YYYY_MM_DD format).
             Photos will be matched to flights by date and timestamp.
           </p>
+          <label className="mt-4 flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={videoLinksOnly}
+              onChange={(e) => setVideoLinksOnly(e.target.checked)}
+              disabled={processing}
+              className="rounded border-gray-300"
+            />
+            <span className="text-sm text-gray-700">
+              Update video links only (do not regenerate photos) — use when photos are already done and you only need to record video file locations.
+            </span>
+          </label>
         </div>
 
         <div className="p-6 overflow-y-auto flex-1">
@@ -697,7 +865,12 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
           {processing && (
             <div className="mb-4 p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-blue-900">
-                Processing flight {currentFlightIndex} of {flightLogs.length}...
+                {videoLinksOnly
+                  ? `Updating video links — flight ${currentFlightIndex} of ${flightLogs.length}...`
+                  : `Processing flight ${currentFlightIndex} of ${flightLogs.length}...`}
+              </p>
+              <p className="text-sm text-blue-800 mt-1">
+                Videos linked so far: <strong>{totalVideosLinked}</strong>
               </p>
               <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
                 <div 
@@ -712,7 +885,10 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
           {!processing && (completedCount > 0 || errorCount > 0 || skippedCount > 0) && (
             <div className="mb-4 p-4 bg-gray-50 rounded-lg">
               <p className="text-sm text-gray-900">
-                <strong>Summary:</strong> {completedCount} completed, {errorCount} error(s), {skippedCount} skipped, {totalPhotosCreated} photo(s) created total
+                <strong>Summary:</strong> {completedCount} completed, {errorCount} error(s), {skippedCount} skipped
+                {videoLinksOnly
+                  ? `, ${totalVideosLinked} video(s) linked.`
+                  : `, ${totalPhotosCreated} photo(s) created, ${totalVideosLinked} video(s) linked.`}
               </p>
             </div>
           )}
@@ -728,6 +904,7 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
                   <th className="px-4 py-2 text-left">Photos Found</th>
                   <th className="px-4 py-2 text-left">Photos Matched</th>
                   <th className="px-4 py-2 text-left">Photos Created</th>
+                  <th className="px-4 py-2 text-left">Videos</th>
                 </tr>
               </thead>
               <tbody>
@@ -750,9 +927,23 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
                         {status.status === 'completed' ? 'Completed' :
                          status.status === 'error' ? 'Error' :
                          status.status === 'skipped' ? 'Skipped' :
-                         status.status === 'processing' ? 'Processing...' :
+                         status.status === 'processing' ? 'Processing' :
                          'Pending'}
                       </span>
+                      {status.status === 'processing' && status.totalPhotosInFlight != null && status.totalPhotosInFlight > 0 && (
+                        <div className="mt-2 min-w-[120px]">
+                          <div className="flex justify-between text-xs text-gray-600 mb-0.5">
+                            <span>{status.photosProcessed ?? 0} / {status.totalPhotosInFlight} photos</span>
+                            <span>{Math.round(((status.photosProcessed ?? 0) / status.totalPhotosInFlight) * 100)}%</span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                              style={{ width: `${((status.photosProcessed ?? 0) / status.totalPhotosInFlight) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                       {status.error && (
                         <div className="text-xs text-red-600 mt-1">{status.error}</div>
                       )}
@@ -760,6 +951,7 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
                     <td className="px-4 py-2">{status.photosFound}</td>
                     <td className="px-4 py-2">{status.photosMatched}</td>
                     <td className="px-4 py-2">{status.photosCreated}</td>
+                    <td className="px-4 py-2">{status.videosLinked != null ? status.videosLinked : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -776,13 +968,23 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
           >
             Close
           </button>
-          <button
-            onClick={handleStartProcessing}
-            disabled={processing || !parentFolder}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {processing ? 'Processing...' : `Regenerate Photos (${flightLogs.length} flights)`}
-          </button>
+          {processing ? (
+            <button
+              onClick={handleCancelProcessing}
+              type="button"
+              className="px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600"
+            >
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={handleStartProcessing}
+              disabled={!parentFolder}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {videoLinksOnly ? `Update video links (${flightLogs.length} flights)` : `Regenerate Photos (${flightLogs.length} flights)`}
+            </button>
+          )}
         </div>
       </div>
     </div>
