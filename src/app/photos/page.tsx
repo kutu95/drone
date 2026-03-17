@@ -173,7 +173,8 @@ export default function PhotoSearchPage() {
             try {
               let dirHandle: FileSystemDirectoryHandle | null = await loadStoredParentFolderHandle();
               if (dirHandle && 'requestPermission' in dirHandle) {
-                const perm = await (dirHandle as FileSystemDirectoryHandle).requestPermission({ mode: 'read' });
+                // Cast to any so we don't depend on TS lib having requestPermission typed
+                const perm = await (dirHandle as any).requestPermission({ mode: 'read' });
                 if (perm !== 'granted') dirHandle = null;
               }
               if (!dirHandle && typeof (window as unknown as { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker === 'function') {
