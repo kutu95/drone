@@ -308,7 +308,7 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
       rawSegments.push({
         points: currentPoints,
         isRecording: currentIsRecording,
-        ...(currentIsRecording && { timeRange: { startMs, endMs } }),
+        ...(currentIsRecording ? { timeRange: { startMs, endMs } } : {}),
       });
     }
 
