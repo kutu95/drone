@@ -4,9 +4,47 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Marker } from '@react-google-maps/api';
+import { Marker, Polyline } from '@react-google-maps/api';
 import Link from 'next/link';
 import { GOOGLE_MAPS_LOADER_CONFIG } from '@/lib/google-maps-config';
+
+const VIDEO_PARENT_IDB_NAME = 'bulk-photo-regen';
+const VIDEO_PARENT_IDB_STORE = 'settings';
+const VIDEO_PARENT_FOLDER_KEY = 'parent-folder-handle';
+
+async function loadStoredParentFolderHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open(VIDEO_PARENT_IDB_NAME, 1);
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => resolve(r.result);
+      r.onupgradeneeded = (e) => {
+        (e.target as IDBOpenDBRequest).result.createObjectStore(VIDEO_PARENT_IDB_STORE);
+      };
+    });
+    const handle = await new Promise<FileSystemDirectoryHandle | undefined>((resolve, reject) => {
+      const tx = db.transaction(VIDEO_PARENT_IDB_STORE, 'readonly');
+      const req = tx.objectStore(VIDEO_PARENT_IDB_STORE).get(VIDEO_PARENT_FOLDER_KEY);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(tx.error);
+    });
+    db.close();
+    return handle ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function formatFlightDateForFolder(flightDate?: string | null): string | null {
+  if (!flightDate) return null;
+  try {
+    const d = new Date(flightDate);
+    if (isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, '0')}_${String(d.getDate()).padStart(2, '0')}`;
+  } catch {
+    return null;
+  }
+}
 
 
 interface Photo {
@@ -32,12 +70,24 @@ interface PhotoGroupedByMonth {
   photos: Photo[];
 }
 
+interface VideoSearchResult {
+  flightLogId: string;
+  flightDate: string | null;
+  videoFilenames: string[];
+  lat: number;
+  lng: number;
+  recordingPath: Array<{ lat: number; lng: number }>;
+}
+
 export default function PhotoSearchPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [searchMode, setSearchMode] = useState<'photos' | 'videos'>('photos');
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [videos, setVideos] = useState<VideoSearchResult[]>([]);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<VideoSearchResult | null>(null);
   /** When true, show the full-screen lightbox (from list click). When false, only the map InfoWindow can show (from marker click). */
   const [showLightbox, setShowLightbox] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -56,109 +106,150 @@ export default function PhotoSearchPage() {
     }
   }, [map]);
   
-  // Manually manage InfoWindow to prevent duplicates (only when photo selected from map, not from list)
+  // Manually manage InfoWindow (photo or video selected from map)
   useEffect(() => {
     if (!map || !infoWindowRef.current) return;
-    
     if (isProcessingRef.current) return;
-    
+
     const infoWindow = infoWindowRef.current;
-    
-    // Clean up previous listener if it exists
     if (closeListenerRef.current) {
       google.maps.event.removeListener(closeListenerRef.current);
       closeListenerRef.current = null;
     }
-    
-    // Only show InfoWindow when a photo is selected from the map (not when lightbox is open from list)
-    if (selectedPhoto && !showLightbox) {
-      if (currentPhotoIdRef.current === selectedPhoto.id && infoWindow.getMap()) {
+
+    const showPhoto = selectedPhoto && !showLightbox;
+    const showVideo = selectedVideo;
+    const itemToShow = showPhoto ? selectedPhoto : showVideo ? selectedVideo : null;
+
+    if (!itemToShow) {
+      if (infoWindow.getMap()) infoWindow.close();
+      currentPhotoIdRef.current = null;
+      return;
+    }
+
+    isProcessingRef.current = true;
+    const content = document.createElement('div');
+    content.className = 'p-2 max-w-xs';
+
+    if ('flightLogId' in itemToShow) {
+      const v = itemToShow as VideoSearchResult;
+      const title = document.createElement('div');
+      title.className = 'font-semibold mb-1 text-sm';
+      title.textContent = 'Flight with video';
+      content.appendChild(title);
+      if (v.flightDate) {
+        const dateDiv = document.createElement('div');
+        dateDiv.className = 'text-gray-600 text-xs mb-1';
+        dateDiv.textContent = new Date(v.flightDate).toLocaleDateString();
+        content.appendChild(dateDiv);
+      }
+      const countDiv = document.createElement('div');
+      countDiv.className = 'text-gray-600 text-xs mb-2';
+      countDiv.textContent = v.videoFilenames.length > 0
+        ? `${v.videoFilenames.length} video file(s)`
+        : 'Video path in area (files not linked)';
+      content.appendChild(countDiv);
+      const flightLogLink = document.createElement('a');
+      flightLogLink.href = `/logs/${v.flightLogId}`;
+      flightLogLink.className = 'text-blue-600 hover:underline text-sm block mb-2';
+      flightLogLink.textContent = 'Open flight log →';
+      flightLogLink.target = '_blank';
+      content.appendChild(flightLogLink);
+      if (v.videoFilenames.length > 0) {
+        const listLabel = document.createElement('div');
+        listLabel.className = 'text-xs font-medium text-gray-700 mb-1';
+        listLabel.textContent = 'Open video:';
+        content.appendChild(listLabel);
+        const list = document.createElement('div');
+        list.className = 'flex flex-col gap-1 max-h-32 overflow-y-auto';
+        const dateFolderName = formatFlightDateForFolder(v.flightDate);
+        v.videoFilenames.forEach((filename) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'text-left text-blue-600 hover:underline text-xs truncate';
+          btn.textContent = filename;
+          btn.title = filename;
+          btn.onclick = async () => {
+            try {
+              let dirHandle: FileSystemDirectoryHandle | null = await loadStoredParentFolderHandle();
+              if (dirHandle && 'requestPermission' in dirHandle) {
+                const perm = await (dirHandle as FileSystemDirectoryHandle).requestPermission({ mode: 'read' });
+                if (perm !== 'granted') dirHandle = null;
+              }
+              if (!dirHandle && typeof (window as unknown as { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker === 'function') {
+                dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+              }
+              if (!dirHandle) return;
+              const dateFolder = dateFolderName
+                ? await dirHandle.getDirectoryHandle(dateFolderName)
+                : dirHandle;
+              const fileHandle = await dateFolder.getFileHandle(filename);
+              const file = await fileHandle.getFile();
+              const url = URL.createObjectURL(file);
+              window.open(url, '_blank');
+            } catch (err: unknown) {
+              if ((err as { name?: string })?.name !== 'AbortError') {
+                alert('Could not open video. Use Bulk Photo Regeneration to set the parent folder, or open the flight log to open videos.');
+              }
+            }
+          };
+          list.appendChild(btn);
+        });
+        content.appendChild(list);
+      }
+      infoWindow.setPosition({ lat: v.lat, lng: v.lng });
+      currentPhotoIdRef.current = null;
+      closeListenerRef.current = google.maps.event.addListener(infoWindow, 'closeclick', () => setSelectedVideo(null));
+    } else {
+      const p = itemToShow as Photo;
+      if (currentPhotoIdRef.current === p.id && infoWindow.getMap()) {
+        isProcessingRef.current = false;
         return;
       }
-      
-      isProcessingRef.current = true;
-      
-      if (infoWindow.getMap() && currentPhotoIdRef.current !== selectedPhoto.id) {
-        infoWindow.close();
-      }
-      
-      // Create content for InfoWindow
-      const content = document.createElement('div');
-      content.className = 'p-2 max-w-xs';
-      
-      if (selectedPhoto.thumbnailUrl) {
+      if (infoWindow.getMap() && currentPhotoIdRef.current !== p.id) infoWindow.close();
+      if (p.thumbnailUrl) {
         const img = document.createElement('img');
-        img.src = selectedPhoto.thumbnailUrl;
-        img.alt = selectedPhoto.photoFilename || 'Photo';
+        img.src = p.thumbnailUrl;
+        img.alt = p.photoFilename || 'Photo';
         img.className = 'mb-2 rounded max-w-full h-auto';
         img.style.maxHeight = '200px';
         content.appendChild(img);
       }
-      
       const textDiv = document.createElement('div');
       textDiv.className = 'text-sm';
-      
       const filenameDiv = document.createElement('div');
       filenameDiv.className = 'font-semibold mb-1';
-      filenameDiv.textContent = selectedPhoto.photoFilename || 'Photo';
+      filenameDiv.textContent = p.photoFilename || 'Photo';
       textDiv.appendChild(filenameDiv);
-      
-      if (selectedPhoto.absoluteTimestamp) {
+      if (p.absoluteTimestamp) {
         const dateDiv = document.createElement('div');
         dateDiv.className = 'text-gray-600 mb-1';
-        dateDiv.textContent = new Date(selectedPhoto.absoluteTimestamp).toLocaleString();
+        dateDiv.textContent = new Date(p.absoluteTimestamp).toLocaleString();
         textDiv.appendChild(dateDiv);
       }
-      
       const gpsDiv = document.createElement('div');
       gpsDiv.className = 'text-gray-600 text-xs';
-      gpsDiv.textContent = `GPS: ${selectedPhoto.lat.toFixed(6)}, ${selectedPhoto.lng.toFixed(6)}`;
+      gpsDiv.textContent = `GPS: ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
       textDiv.appendChild(gpsDiv);
-      
-      if (selectedPhoto.altitudeM !== undefined) {
+      if (p.altitudeM !== undefined) {
         const altDiv = document.createElement('div');
         altDiv.className = 'text-gray-600 text-xs';
-        altDiv.textContent = `Altitude: ${Math.round(selectedPhoto.altitudeM)}m`;
+        altDiv.textContent = `Altitude: ${Math.round(p.altitudeM)}m`;
         textDiv.appendChild(altDiv);
       }
-      
       content.appendChild(textDiv);
-      
-      // Update content and position
-      infoWindow.setContent(content);
-      infoWindow.setPosition({ lat: selectedPhoto.lat, lng: selectedPhoto.lng });
-      
-      if (infoWindow.getMap()) {
-        infoWindow.close();
-      }
-      
-      currentPhotoIdRef.current = selectedPhoto.id;
-      infoWindow.open(map);
-      isProcessingRef.current = false;
-      
-      // Add close listener (remove old one first if exists)
-      if (closeListenerRef.current) {
-        google.maps.event.removeListener(closeListenerRef.current);
-      }
+      infoWindow.setPosition({ lat: p.lat, lng: p.lng });
+      currentPhotoIdRef.current = p.id;
       closeListenerRef.current = google.maps.event.addListener(infoWindow, 'closeclick', () => {
         currentPhotoIdRef.current = null;
         setSelectedPhoto(null);
       });
-      
-      return () => {
-        isProcessingRef.current = false;
-        if (closeListenerRef.current) {
-          google.maps.event.removeListener(closeListenerRef.current);
-          closeListenerRef.current = null;
-        }
-      };
-    } else {
-      if (infoWindow.getMap()) {
-        infoWindow.close();
-      }
-      currentPhotoIdRef.current = null;
     }
-  }, [selectedPhoto, showLightbox, map]);
+
+    infoWindow.setContent(content);
+    infoWindow.open(map);
+    isProcessingRef.current = false;
+  }, [selectedPhoto, selectedVideo, showLightbox, map]);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
@@ -387,7 +478,25 @@ export default function PhotoSearchPage() {
         endDate: endDate || undefined,
       };
 
-      console.log('🔍 Searching photos with params:', searchParams);
+      if (searchMode === 'videos') {
+        const response = await fetch('/api/videos/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          credentials: 'include',
+          body: JSON.stringify(searchParams),
+        });
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Failed to search videos');
+        }
+        const data = await response.json();
+        setVideos(data.videos || []);
+        setPhotos([]);
+        return;
+      }
 
       const response = await fetch('/api/photos/search', {
         method: 'POST',
@@ -406,41 +515,11 @@ export default function PhotoSearchPage() {
       }
 
       const data = await response.json();
-      console.log(`✅ Search returned ${data.photos?.length || 0} photos`);
-      
-      // Deduplicate photos by ID to prevent duplicate markers/info windows
       const uniquePhotos = data.photos ? Array.from(
         new Map(data.photos.map((p: Photo) => [p.id, p])).values()
       ) : [];
-      
-      if (uniquePhotos.length !== data.photos?.length) {
-        console.warn(`⚠️ Found ${data.photos?.length - uniquePhotos.length} duplicate photos, deduplicated to ${uniquePhotos.length}`);
-      }
-      
-      if (uniquePhotos.length > 0) {
-        console.log('📍 Sample photo locations:', uniquePhotos.slice(0, 3).map((p: Photo) => ({
-          lat: p.lat,
-          lng: p.lng,
-          filename: p.photoFilename,
-        })));
-      } else {
-        console.warn('⚠️ No photos found. Checking if photos exist in database...');
-        // Debug: Check total photo count
-        const { data: totalPhotos, error: countError } = await supabase
-          .from('flight_log_data_points')
-          .select('id', { count: 'exact', head: true })
-          .eq('is_photo', true)
-          .not('lat', 'is', null)
-          .not('lng', 'is', null);
-        
-        if (!countError && totalPhotos !== null) {
-          console.log(`📊 Total photos with GPS in database: ${totalPhotos}`);
-        } else {
-          console.error('Error checking photo count:', countError);
-        }
-      }
-
       setPhotos(uniquePhotos);
+      setVideos([]);
       
       // Note: We intentionally don't change the map view - keep the current visible area
     } catch (error) {
@@ -459,7 +538,9 @@ export default function PhotoSearchPage() {
 
   const clearResults = () => {
     setPhotos([]);
+    setVideos([]);
     setSelectedPhoto(null);
+    setSelectedVideo(null);
   };
 
   if (authLoading || !isLoaded) {
@@ -488,7 +569,7 @@ export default function PhotoSearchPage() {
                 Flight Logs
               </Link>
               <Link href="/photos" className="text-blue-600 font-semibold">
-                Photo Search
+                Photos &amp; Videos
               </Link>
               <Link href="/batteries" className="text-gray-600 hover:text-gray-800">
                 Batteries
@@ -511,11 +592,36 @@ export default function PhotoSearchPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-4">Photo Search</h1>
+          <h1 className="text-3xl font-bold mb-4">Photo &amp; Video Search</h1>
           
           {/* Search Controls */}
           <div className="bg-white rounded-lg shadow p-4 mb-4">
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4 mb-3">
+              <div>
+                <span className="block text-sm font-medium text-gray-700 mb-1">Search for</span>
+                <div className="flex rounded-md border border-gray-300 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchMode('photos');
+                      clearResults();
+                    }}
+                    className={`px-4 py-2 text-sm font-medium ${searchMode === 'photos' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    Photos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchMode('videos');
+                      clearResults();
+                    }}
+                    className={`px-4 py-2 text-sm font-medium border-l border-gray-300 ${searchMode === 'videos' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    Videos
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Date Range (Optional)</label>
                 <div className="flex items-center gap-2">
@@ -543,7 +649,7 @@ export default function PhotoSearchPage() {
                 >
                   {loading ? 'Searching...' : 'Search Visible Area'}
                 </button>
-                {photos.length > 0 && (
+                {(photos.length > 0 || videos.length > 0) && (
                   <button
                     onClick={clearResults}
                     className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
@@ -555,12 +661,19 @@ export default function PhotoSearchPage() {
             </div>
             
             <p className="text-sm text-gray-600 mt-3">
-              Search for photos in the currently visible map area. Pan and zoom the map to adjust the search area.
+              {searchMode === 'photos'
+                ? 'Search for photos in the currently visible map area. Pan and zoom the map to adjust the search area.'
+                : 'Search for flights with video whose path overlaps the visible map area. Pan and zoom to adjust the area.'}
             </p>
             
             {photos.length > 0 && (
               <div className="text-sm text-gray-600 mt-2 font-semibold">
                 Found {photos.length} photo(s) in visible area
+              </div>
+            )}
+            {videos.length > 0 && (
+              <div className="text-sm text-gray-600 mt-2 font-semibold">
+                Found {videos.length} flight(s) with video in visible area
               </div>
             )}
             
@@ -584,11 +697,9 @@ export default function PhotoSearchPage() {
               setMap(mapInstance);
             }}
             onClick={() => {
-              // Close info window when clicking on the map
-              if (infoWindowRef.current) {
-                infoWindowRef.current.close();
-              }
+              if (infoWindowRef.current) infoWindowRef.current.close();
               setSelectedPhoto(null);
+              setSelectedVideo(null);
             }}
             options={{
               mapTypeId: 'satellite',
@@ -598,6 +709,48 @@ export default function PhotoSearchPage() {
             }}
           >
 
+            {/* Video recording paths: red polyline per flight; click to show flight info */}
+            {videos.map((v) => (
+              <span key={v.flightLogId}>
+                {v.recordingPath?.length > 1 ? (
+                  <Polyline
+                    path={v.recordingPath}
+                    options={{
+                      strokeColor: '#DC2626',
+                      strokeOpacity: 0.9,
+                      strokeWeight: 4,
+                      clickable: true,
+                      cursor: 'pointer',
+                    }}
+                    onClick={(e) => {
+                      e?.domEvent?.stopPropagation();
+                      if (infoWindowRef.current) infoWindowRef.current.close();
+                      setSelectedPhoto(null);
+                      setSelectedVideo(selectedVideo?.flightLogId === v.flightLogId ? null : v);
+                    }}
+                  />
+                ) : (
+                  <Marker
+                    position={{ lat: v.lat, lng: v.lng }}
+                    icon={{
+                      path: google.maps.SymbolPath.CIRCLE,
+                      scale: 10,
+                      fillColor: '#DC2626',
+                      fillOpacity: 1,
+                      strokeColor: '#ffffff',
+                      strokeWeight: 2,
+                    }}
+                    onClick={(e) => {
+                      e?.domEvent?.stopPropagation();
+                      if (infoWindowRef.current) infoWindowRef.current.close();
+                      setSelectedPhoto(null);
+                      setSelectedVideo(selectedVideo?.flightLogId === v.flightLogId ? null : v);
+                    }}
+                    options={{ optimized: false, clickable: true }}
+                  />
+                )}
+              </span>
+            ))}
             {/* Photo markers: circle when zoomed out; circle with direction pointer when view < 200m and heading known */}
             {photos.map((photo) => {
               const heading =
@@ -662,6 +815,33 @@ export default function PhotoSearchPage() {
             {/* InfoWindow is now managed manually via useEffect */}
           </GoogleMap>
         </div>
+
+        {/* Video results list */}
+        {videos.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-2xl font-bold mb-4">Videos ({videos.length} flight{videos.length !== 1 ? 's' : ''})</h2>
+            <ul className="space-y-3">
+              {videos.map((v) => (
+                <li key={v.flightLogId} className="flex items-center justify-between gap-4 py-2 border-b border-gray-100 last:border-0">
+                  <div>
+                    <span className="font-medium">
+                      {v.flightDate ? new Date(v.flightDate).toLocaleDateString() : 'Unknown date'}
+                    </span>
+                    <span className="text-gray-500 text-sm ml-2">
+                      {v.videoFilenames.length} video file{v.videoFilenames.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <Link
+                    href={`/logs/${v.flightLogId}`}
+                    className="text-blue-600 hover:underline text-sm font-medium"
+                  >
+                    Open flight log →
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Photo List Grouped by Month */}
         {photosByMonth.length > 0 && (
@@ -753,16 +933,12 @@ export default function PhotoSearchPage() {
           </div>
         )}
 
-        {photos.length === 0 && !loading && map && (
+        {photos.length === 0 && videos.length === 0 && !loading && map && (
           <div className="bg-white rounded-lg shadow p-6 text-center text-gray-500">
-            {photos.length === 0 && map ? (
-              <>
-                No photos found in the visible map area{startDate || endDate ? ' for the specified date range' : ''}. 
-                Try panning or zooming to a different area and search again.
-              </>
-            ) : (
-              'Click "Search Visible Area" to find photos in the current map view.'
-            )}
+            {searchMode === 'photos'
+              ? 'No photos found in the visible map area. Try panning or zooming and search again.'
+              : 'No flights with video found whose path overlaps the visible area. Try panning or zooming and search again.'}
+            {startDate || endDate ? ' (Date filter applied.)' : ''}
           </div>
         )}
       </main>

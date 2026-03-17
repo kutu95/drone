@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
     
     // Create a Supabase client for auth verification
     const { createClient } = await import('@supabase/supabase-js');
-    const supabase = createClient(supabaseUrl, supabaseAnonKey);
+    const schema = process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, { db: { schema } });
     
     let user;
     

@@ -51,7 +51,8 @@ export async function GET(request: NextRequest) {
     if (!user && authHeader?.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
       const { createClient } = await import('@supabase/supabase-js');
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const schema = process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, { db: { schema } });
       try {
         const { data: { user: userFromToken }, error } = await supabase.auth.getUser(token);
         if (!error && userFromToken) {

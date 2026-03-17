@@ -17,7 +17,9 @@
     "remove-duplicate-photos": "tsx scripts/remove-duplicate-macos-photo-records.ts",
     "remove-duplicate-photos:dry-run": "tsx scripts/remove-duplicate-macos-photo-records.ts --dry-run",
     "backfill-photo-camera-direction": "tsx scripts/backfill-photo-camera-direction.ts",
-    "backfill-photo-camera-direction:dry-run": "tsx scripts/backfill-photo-camera-direction.ts --dry-run"
+    "backfill-photo-camera-direction:dry-run": "tsx scripts/backfill-photo-camera-direction.ts --dry-run",
+    "migrate:storage": "tsx scripts/migrate-storage-buckets.ts",
+    "migrate:storage:dry-run": "tsx scripts/migrate-storage-buckets.ts --dry-run"
   },
   "dependencies": {
     "@react-google-maps/api": "^2.19.3",

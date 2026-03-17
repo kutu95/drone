@@ -1,0 +1,8 @@
+# Supabase local config (used by `supabase start`).
+# Expose the drone schema so the app can use NEXT_PUBLIC_SUPABASE_SCHEMA=drone.
+
+[api]
+enabled = true
+port = 54321
+# Expose both public and drone so REST API can access drone.* tables
+schemas = ["public", "drone"]

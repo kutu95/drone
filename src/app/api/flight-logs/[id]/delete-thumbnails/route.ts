@@ -34,7 +34,8 @@ export async function DELETE(
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
       const { createClient } = await import('@supabase/supabase-js');
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const schema = process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, { db: { schema } });
       try {
         const { data: { user: userFromToken }, error } = await supabase.auth.getUser(token);
         if (!error && userFromToken) {
