@@ -900,9 +900,7 @@ export default function PhotoSearchPage() {
                             className="cursor-pointer hover:opacity-75 transition-opacity group"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (infoWindowRef.current?.getMap()) {
-                                infoWindowRef.current.close();
-                              }
+                              infoWindowRef.current?.close();
                               setSelectedPhoto(photo);
                               setShowLightbox(true); // List click = open full-screen lightbox
                             }}
