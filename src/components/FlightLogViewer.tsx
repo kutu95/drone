@@ -687,6 +687,7 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
                 // @ts-expect-error File System Access API
                 dirHandle = await window.showDirectoryPicker();
               }
+              if (!dirHandle) return;
               const dateFolder = photoFolderPath
                 ? await dirHandle.getDirectoryHandle(photoFolderPath)
                 : dirHandle;
