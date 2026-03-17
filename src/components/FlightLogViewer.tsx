@@ -284,11 +284,11 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
           const last = currentPoints[currentPoints.length - 1];
           const startMs = first.timestampOffsetMs ?? 0;
           const endMs = last.timestampOffsetMs ?? 0;
-          rawSegments.push({
-            points: [...currentPoints],
-            isRecording: currentIsRecording,
-            ...(currentIsRecording && { timeRange: { startMs, endMs } }),
-          });
+      rawSegments.push({
+        points: [...currentPoints],
+        isRecording: currentIsRecording,
+        ...(currentIsRecording ? { timeRange: { startMs, endMs } } : {}),
+      });
         }
         if (bigJump) {
           console.log(`Path jump detected at data point ${index}: ${distance.toFixed(0)}m gap. Splitting into new segment.`);
@@ -450,7 +450,7 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
         });
         console.log(`Segment ${segIndex + 1}: Simplified from ${segment.length} to ${simplified.length} points`);
       }
-      result.push({ path: simplified, isRecording, ...(timeRange && { timeRange }) });
+      result.push({ path: simplified, isRecording, ...(timeRange ? { timeRange } : {}) });
     });
 
     const totalOriginal = allPathCoordinates.length;
@@ -680,7 +680,7 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
             try {
               let dirHandle: FileSystemDirectoryHandle | null = await loadStoredParentFolderHandle();
               if (dirHandle && 'requestPermission' in dirHandle) {
-                const perm = await (dirHandle as FileSystemDirectoryHandle).requestPermission({ mode: 'read' });
+                const perm = await (dirHandle as any).requestPermission({ mode: 'read' });
                 if (perm !== 'granted') dirHandle = null;
               }
               if (!dirHandle) {
