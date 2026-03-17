@@ -203,11 +203,11 @@ export default function PhotoSearchPage() {
       closeListenerRef.current = google.maps.event.addListener(infoWindow, 'closeclick', () => setSelectedVideo(null));
     } else {
       const p = itemToShow as Photo;
-      if (currentPhotoIdRef.current === p.id && infoWindow.getMap()) {
+      if (currentPhotoIdRef.current === p.id) {
         isProcessingRef.current = false;
         return;
       }
-      if (infoWindow.getMap() && currentPhotoIdRef.current !== p.id) infoWindow.close();
+      infoWindow.close();
       if (p.thumbnailUrl) {
         const img = document.createElement('img');
         img.src = p.thumbnailUrl;
