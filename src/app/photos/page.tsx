@@ -725,7 +725,6 @@ export default function PhotoSearchPage() {
                       strokeOpacity: 0.9,
                       strokeWeight: 4,
                       clickable: true,
-                      cursor: 'pointer',
                     }}
                     onClick={(e) => {
                       e?.domEvent?.stopPropagation();
