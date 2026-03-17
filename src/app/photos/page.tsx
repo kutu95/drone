@@ -122,7 +122,7 @@ export default function PhotoSearchPage() {
     const itemToShow = showPhoto ? selectedPhoto : showVideo ? selectedVideo : null;
 
     if (!itemToShow) {
-      if (infoWindow.getMap()) infoWindow.close();
+      infoWindow.close();
       currentPhotoIdRef.current = null;
       return;
     }
