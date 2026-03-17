@@ -93,7 +93,7 @@ export async function createServerSupabaseClient(): Promise<
 > {
   try {
     console.log('🔧 Creating server Supabase client with schema:', DB_SCHEMA);
-    const client = createClient(supabaseUrl, supabaseAnonKey, {
+    const client = createClient(supabaseUrl!, supabaseAnonKey!, {
       db: {
         schema: DB_SCHEMA,
       },
