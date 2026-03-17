@@ -653,7 +653,6 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
                 strokeOpacity: 0.8,
                 strokeWeight: 3,
                 clickable: seg.isRecording,
-                cursor: seg.isRecording ? 'pointer' : undefined,
               }}
               onClick={seg.isRecording ? () => setSelectedRecordingSegmentIndex(segmentIndex) : undefined}
             />
