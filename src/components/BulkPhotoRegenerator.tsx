@@ -121,7 +121,7 @@ export default function BulkPhotoRegenerator({ flightLogs, onClose, onComplete }
       try {
         // Permission may have been revoked; re-request read access
         const perm = 'requestPermission' in handle
-          ? await (handle as FileSystemDirectoryHandle).requestPermission({ mode: 'read' })
+          ? await (handle as any).requestPermission({ mode: 'read' })
           : 'granted';
         if (cancelled || perm !== 'granted') return;
         parentFolderHandleRef.current = handle;
