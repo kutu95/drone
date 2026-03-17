@@ -516,9 +516,13 @@ export default function PhotoSearchPage() {
       }
 
       const data = await response.json();
-      const uniquePhotos = data.photos ? Array.from(
-        new Map(data.photos.map((p: Photo) => [p.id, p])).values()
-      ) : [];
+      const uniquePhotos: Photo[] = data.photos
+        ? Array.from(
+            new Map<string, Photo>(
+              (data.photos as Photo[]).map((p) => [p.id, p]),
+            ).values(),
+          )
+        : [];
       setPhotos(uniquePhotos);
       setVideos([]);
       
