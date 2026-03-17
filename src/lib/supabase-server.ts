@@ -31,7 +31,7 @@ export async function createAuthenticatedSupabaseClient(
   accessToken: string,
 ): Promise<SupabaseClient<any, any, any, any, any>> {
   // Verify the token first by getting the user
-  const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
+  const tempClient = createClient(supabaseUrl!, supabaseAnonKey!, {
     db: { schema: DB_SCHEMA },
   });
   const { data: { user }, error: userError } = await tempClient.auth.getUser(accessToken);
@@ -42,7 +42,7 @@ export async function createAuthenticatedSupabaseClient(
   
   // Create client with the token in headers for all requests
   // Supabase Postgres uses the Authorization header for RLS JWT verification
-  const client = createClient(supabaseUrl, supabaseAnonKey, {
+  const client = createClient(supabaseUrl!, supabaseAnonKey!, {
     db: {
       schema: DB_SCHEMA,
     },
