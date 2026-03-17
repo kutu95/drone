@@ -709,7 +709,9 @@ export default function FlightLogViewer({ flightLog, onFlightLogUpdated }: Fligh
                 types: [{ accept: { 'video/*': ['.mp4', '.mov', '.avi', '.mkv'] } }],
                 multiple: true,
               });
-              const names = await Promise.all(handles.map(async (h) => (await h.getFile()).name));
+              const names = await Promise.all(
+                (handles as any[]).map(async (h) => (await h.getFile()).name),
+              );
               const combined = [...videoFilenames, ...names];
               const deduped = Array.from(new Set(combined));
               const { supabase } = await import('@/lib/supabase');
