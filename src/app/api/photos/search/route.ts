@@ -75,10 +75,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid bounds provided' }, { status: 400 });
     }
 
-    // First, get flight log IDs that match date criteria and belong to user
+    // First, get flight logs that match date criteria and belong to user.
+    // We include flight_date so we don't rely on PostgREST schema-cache relationships
+    // (the `flight_logs!inner(...)` nested select can fail if the relationship cache
+    // isn't aware of the FK).
     let flightLogQuery = supabase
       .from('flight_logs')
-      .select('id')
+      .select('id, flight_date')
       .eq('owner_id', user.id);
 
     if (startDate) {
@@ -110,6 +113,9 @@ export async function POST(request: NextRequest) {
     console.log(`✅ Found ${flightLogs?.length || 0} flight logs`);
 
     const flightLogIds = (flightLogs || []).map((log: { id: string }) => log.id);
+    const flightDateByLogId = new Map<string, string | null>(
+      (flightLogs || []).map((log: { id: string; flight_date: string | null }) => [log.id, log.flight_date]),
+    );
 
     if (flightLogIds.length === 0) {
       return NextResponse.json({ photos: [] });
@@ -146,11 +152,6 @@ export async function POST(request: NextRequest) {
           original_file_url,
           heading_deg,
           gimbal_pitch_deg,
-          flight_logs!inner(
-            id,
-            flight_date,
-            owner_id
-          )
         `)
         .eq('is_photo', true)
         .not('lat', 'is', null)
@@ -181,8 +182,9 @@ export async function POST(request: NextRequest) {
     const photos = allPhotoDataPoints.map((dp: any) => {
       // Calculate absolute timestamp from flight date and offset
       let absoluteTimestamp: string | null = null;
-      if (dp.flight_logs?.flight_date && dp.timestamp_offset_ms !== null) {
-        const flightDate = new Date(dp.flight_logs.flight_date);
+      const flightDateStr = flightDateByLogId.get(dp.flight_log_id) ?? null;
+      if (flightDateStr && dp.timestamp_offset_ms !== null) {
+        const flightDate = new Date(flightDateStr);
         const absoluteDate = new Date(flightDate.getTime() + dp.timestamp_offset_ms);
         absoluteTimestamp = absoluteDate.toISOString();
       }
@@ -199,7 +201,7 @@ export async function POST(request: NextRequest) {
         originalFileUrl: dp.original_file_url,
         headingDeg: dp.heading_deg ?? null,
         gimbalPitchDeg: dp.gimbal_pitch_deg ?? null,
-        flightDate: dp.flight_logs?.flight_date || null,
+        flightDate: flightDateStr,
         absoluteTimestamp,
       };
     });
