@@ -225,6 +225,72 @@ export default function PhotoSearchPage() {
       filenameDiv.className = 'font-semibold mb-1';
       filenameDiv.textContent = p.photoFilename || 'Photo';
       textDiv.appendChild(filenameDiv);
+
+      const openOriginalBtn = document.createElement('button');
+      openOriginalBtn.type = 'button';
+      openOriginalBtn.className = 'text-left text-blue-600 hover:underline text-xs mb-2';
+      openOriginalBtn.textContent = 'Open full-resolution photo';
+      openOriginalBtn.onclick = async () => {
+        try {
+          const isAbsoluteUrl = !!p.originalFileUrl && /^https?:\/\//i.test(p.originalFileUrl);
+          if (isAbsoluteUrl) {
+            window.open(p.originalFileUrl as string, '_blank', 'noopener,noreferrer');
+            return;
+          }
+
+          const targetFilename = (p.photoFilename || p.originalFileUrl || '').split('/').pop();
+          if (!targetFilename) {
+            alert('No original photo filename is available for this record.');
+            return;
+          }
+
+          let dirHandle: FileSystemDirectoryHandle | null = await loadStoredParentFolderHandle();
+          if (dirHandle && 'requestPermission' in dirHandle) {
+            // Cast to any so we don't depend on TS lib having requestPermission typed
+            const perm = await (dirHandle as any).requestPermission({ mode: 'read' });
+            if (perm !== 'granted') dirHandle = null;
+          }
+          if (!dirHandle && typeof (window as unknown as { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker === 'function') {
+            dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+          }
+          if (!dirHandle) return;
+
+          const dateFolderName = formatFlightDateForFolder(p.flightDate ?? p.absoluteTimestamp);
+          const candidateFolders: FileSystemDirectoryHandle[] = [dirHandle];
+          if (dateFolderName) {
+            try {
+              const datedFolder = await dirHandle.getDirectoryHandle(dateFolderName);
+              candidateFolders.unshift(datedFolder);
+            } catch {
+              // Date folder may not exist; try root folder next.
+            }
+          }
+
+          let file: File | null = null;
+          for (const folder of candidateFolders) {
+            try {
+              const fileHandle = await folder.getFileHandle(targetFilename);
+              file = await fileHandle.getFile();
+              break;
+            } catch {
+              // Try next folder candidate.
+            }
+          }
+
+          if (!file) {
+            alert(`Could not find ${targetFilename} in the selected folder.`);
+            return;
+          }
+
+          const url = URL.createObjectURL(file);
+          window.open(url, '_blank');
+        } catch (err: unknown) {
+          if ((err as { name?: string })?.name !== 'AbortError') {
+            alert('Could not open original photo. Select the local parent folder that contains this file.');
+          }
+        }
+      };
+      textDiv.appendChild(openOriginalBtn);
       if (p.absoluteTimestamp) {
         const dateDiv = document.createElement('div');
         dateDiv.className = 'text-gray-600 mb-1';
