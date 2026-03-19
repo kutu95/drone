@@ -131,8 +131,11 @@ export default function PhotoSearchPage() {
     const content = document.createElement('div');
     content.className = 'p-2 max-w-xs';
 
-    if ('flightLogId' in itemToShow) {
+    // Discriminate by recordingPath (unique to video search results).
+    // Both Photo and VideoSearchResult have flightLogId.
+    if ('recordingPath' in itemToShow) {
       const v = itemToShow as VideoSearchResult;
+      const videoFilenames = Array.isArray(v.videoFilenames) ? v.videoFilenames : [];
       const title = document.createElement('div');
       title.className = 'font-semibold mb-1 text-sm';
       title.textContent = 'Flight with video';
@@ -145,8 +148,8 @@ export default function PhotoSearchPage() {
       }
       const countDiv = document.createElement('div');
       countDiv.className = 'text-gray-600 text-xs mb-2';
-      countDiv.textContent = v.videoFilenames.length > 0
-        ? `${v.videoFilenames.length} video file(s)`
+      countDiv.textContent = videoFilenames.length > 0
+        ? `${videoFilenames.length} video file(s)`
         : 'Video path in area (files not linked)';
       content.appendChild(countDiv);
       const flightLogLink = document.createElement('a');
@@ -155,7 +158,7 @@ export default function PhotoSearchPage() {
       flightLogLink.textContent = 'Open flight log →';
       flightLogLink.target = '_blank';
       content.appendChild(flightLogLink);
-      if (v.videoFilenames.length > 0) {
+      if (videoFilenames.length > 0) {
         const listLabel = document.createElement('div');
         listLabel.className = 'text-xs font-medium text-gray-700 mb-1';
         listLabel.textContent = 'Open video:';
@@ -163,7 +166,7 @@ export default function PhotoSearchPage() {
         const list = document.createElement('div');
         list.className = 'flex flex-col gap-1 max-h-32 overflow-y-auto';
         const dateFolderName = formatFlightDateForFolder(v.flightDate);
-        v.videoFilenames.forEach((filename) => {
+        videoFilenames.forEach((filename) => {
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'text-left text-blue-600 hover:underline text-xs truncate';
@@ -238,6 +241,12 @@ export default function PhotoSearchPage() {
         altDiv.textContent = `Altitude: ${Math.round(p.altitudeM)}m`;
         textDiv.appendChild(altDiv);
       }
+      const flightLogLink = document.createElement('a');
+      flightLogLink.href = `/logs/${p.flightLogId}`;
+      flightLogLink.className = 'text-blue-600 hover:underline text-sm block mt-2';
+      flightLogLink.textContent = 'Open flight log →';
+      flightLogLink.target = '_blank';
+      textDiv.appendChild(flightLogLink);
       content.appendChild(textDiv);
       infoWindow.setPosition({ lat: p.lat, lng: p.lng });
       currentPhotoIdRef.current = p.id;
