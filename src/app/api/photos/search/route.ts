@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
           thumbnail_url,
           original_file_url,
           heading_deg,
-          gimbal_pitch_deg,
+          gimbal_pitch_deg
         `)
         .eq('is_photo', true)
         .not('lat', 'is', null)
